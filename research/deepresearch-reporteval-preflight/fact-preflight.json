@@ -1,0 +1,56 @@
+{
+  "generated_at": "2026-05-04T14:31:26.111027+00:00",
+  "ready": false,
+  "task": "fact",
+  "input_path": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/DeepResearch-Eval/example/judge_fact_result/example_fact_judge_input.jsonl",
+  "output_path": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/DeepResearch-Eval/example/judge_fact_result/example_fact_judge_output.jsonl",
+  "provider": "jina",
+  "scanned_records": 1,
+  "summary": {
+    "passed": 3,
+    "warnings": 2,
+    "blockers": 3
+  },
+  "checks": [
+    {
+      "name": "dependencies",
+      "status": "fail",
+      "detail": "Missing package(s): json-repair, dashscope, firecrawl-python"
+    },
+    {
+      "name": "openai_api_key",
+      "status": "fail",
+      "detail": "OPENAI_API_KEY is missing or a placeholder"
+    },
+    {
+      "name": "openai_api_base",
+      "status": "warn",
+      "detail": "OPENAI_API_BASE is unset or a placeholder; default OpenAI endpoint will be used"
+    },
+    {
+      "name": "firecrawl_env_alias",
+      "status": "warn",
+      "detail": "Found FIRECRAWL_API_KEY, but Atools.py reads FIRECRAWL_KEY"
+    },
+    {
+      "name": "jina_api_key",
+      "status": "fail",
+      "detail": "JINA_API_KEY is missing or a placeholder"
+    },
+    {
+      "name": "jsonl_parse",
+      "status": "pass",
+      "detail": "Parsed 1 JSONL record(s)"
+    },
+    {
+      "name": "input_schema",
+      "status": "pass",
+      "detail": "`fact` input schema looks valid"
+    },
+    {
+      "name": "output_path",
+      "status": "pass",
+      "detail": "Output parent is writable: /Users/fu/Desktop/ai study/builds/hku-ai-papers/DeepResearch-Eval/example/judge_fact_result"
+    }
+  ]
+}

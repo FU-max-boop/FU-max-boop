@@ -11,7 +11,7 @@ My current focus is making model behavior easier to inspect: small controlled ex
 - Research engineering: clean experiment runners, result cards, and reproducible figures
 - Agentic AI workflows for research, learning, and iteration
 
-## Featured Project
+## Featured Projects
 
 ### [mini-llm-lab](https://github.com/FU-max-boop/mini-llm-lab)
 
@@ -32,6 +32,37 @@ The project includes:
 - result cards and technical memos
 - a regenerated main figure
 - a first bridge to a more LLM-like tiny backbone using RoPE, RMSNorm, and SwiGLU
+
+### [HKU AI Paper Contribution Batch](research/hku-ai-paper-scout)
+
+I scanned recent HKU AI projects and built small, reviewable research-engineering contributions for the ones where setup reliability matters: OpenCUA, RAG-Anything, DeepResearch-Eval, LightRAG, Spider2, and Claw-Eval.
+
+The common pattern is simple: before a researcher spends model budget or debugging time, run a static preflight that separates packaging/setup blockers from real model failures.
+
+### [OpenCUA AgentNetBench Preflight](research/opencua-agentnetbench-preflight)
+
+A contribution around GUI-agent benchmark reproducibility. I added a static
+preflight utility for AgentNetBench that validates trajectory JSON, screenshots,
+action schemas, coordinates, runtime dependencies, model selection, and endpoint
+configuration before an evaluation run.
+
+Published branch: https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight
+
+### [RAG-Anything Preflight](research/raganything-preflight)
+
+A contribution around multimodal RAG reproducibility. I added a zero-API-call
+preflight utility that checks inputs, parser runtime, LightRAG install state,
+LLM/embedding configuration, numeric environment variables, and output paths.
+
+Published branch: https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight
+
+### [DeepResearch-ReportEval Preflight](research/deepresearch-reporteval-preflight)
+
+A contribution around deep-research report evaluation. I added preflight checks
+for score/fact tasks and corrected the quality-scoring quick start to use the
+report JSONL file required by `judge_score.py`, instead of the topic-only JSONL.
+
+Published branch: https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight
 
 ### [Spider2-DBT Preflight Analysis](research/spider2-dbt-preflight)
 

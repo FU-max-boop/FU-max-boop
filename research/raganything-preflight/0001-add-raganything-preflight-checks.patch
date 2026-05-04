@@ -1,0 +1,562 @@
+From 6e6f35374a65a53f2ff98fa7c7bcf6418f17281f Mon Sep 17 00:00:00 2001
+From: FU-max-boop <ht3fudatou@163.com>
+Date: Mon, 4 May 2026 22:25:48 +0800
+Subject: [PATCH] Add RAG-Anything preflight checks
+
+---
+ README.md                        |  17 +
+ scripts/preflight_raganything.py | 514 +++++++++++++++++++++++++++++++
+ 2 files changed, 531 insertions(+)
+ create mode 100644 scripts/preflight_raganything.py
+
+diff --git a/README.md b/README.md
+index dca774c..102bb6f 100644
+--- a/README.md
++++ b/README.md
+@@ -78,6 +78,23 @@
+ - [X] [2025.07]🎯📢 🚀 RAG-Anything now supports multimodal query capabilities, enabling enhanced RAG with seamless processing of text, images, tables, and equations.
+ - [X] [2025.07]🎯📢 🎉 RAG-Anything has reached 1k🌟 stars on GitHub! Thank you for your incredible support and valuable contributions to the project.
+ 
++### Optional Preflight
++
++Before running document parsing or the examples, you can check local readiness
++without model calls:
++
++```bash
++python scripts/preflight_raganything.py \
++  --paths examples/sample_docs \
++  --parser mineru \
++  --output-json preflight_report.json \
++  --output-md preflight_report.md
++```
++
++The preflight checks input paths, supported file types, parser/runtime
++availability, LLM and embedding environment variables, numeric settings, and
++working/output directory writability. Use `--strict` in CI to fail on blockers.
++
+ ---
+ 
+ ## 🌟 System Overview
+diff --git a/scripts/preflight_raganything.py b/scripts/preflight_raganything.py
+new file mode 100644
+index 0000000..4d5a779
+--- /dev/null
++++ b/scripts/preflight_raganything.py
+@@ -0,0 +1,514 @@
++#!/usr/bin/env python3
++"""
++Static preflight checks for RAG-Anything examples and document ingestion.
++
++The script validates local paths, supported file types, parser/runtime
++availability, and common environment variables before running document parsing,
++LightRAG insertion, or model calls.
++"""
++
++from __future__ import annotations
++
++import argparse
++import importlib.util
++import json
++import os
++import shutil
++import sys
++from dataclasses import dataclass, field
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlparse
++
++
++DEFAULT_EXTENSIONS = [
++    ".pdf",
++    ".jpg",
++    ".jpeg",
++    ".png",
++    ".bmp",
++    ".tiff",
++    ".tif",
++    ".gif",
++    ".webp",
++    ".doc",
++    ".docx",
++    ".ppt",
++    ".pptx",
++    ".xls",
++    ".xlsx",
++    ".txt",
++    ".md",
++]
++
++PARSER_HINTS = {
++    "mineru": {
++        "commands": ["mineru"],
++        "packages": ["mineru"],
++        "note": "MinerU parser; Office files may also require LibreOffice/soffice.",
++    },
++    "docling": {
++        "commands": ["docling"],
++        "packages": ["docling"],
++        "note": "Docling parser for PDF, Office, and HTML-style inputs.",
++    },
++    "paddleocr": {
++        "commands": [],
++        "packages": ["paddleocr"],
++        "note": "PaddleOCR parser for OCR-heavy image/PDF workflows.",
++    },
++}
++
++OFFICE_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
++TEXT_EXTENSIONS = {".txt", ".md"}
++IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif", ".webp"}
++LOCAL_BINDINGS = {"ollama", "lmstudio", "vllm", "lollms"}
++CLOUD_BINDINGS = {"openai", "azure_openai", "minimax", "jina"}
++PLACEHOLDER_VALUES = {"", "your_api_key", "your-api-key", "token-abc123"}
++PROJECT_ROOT = Path(__file__).resolve().parents[1]
++
++if str(PROJECT_ROOT) not in sys.path:
++    sys.path.insert(0, str(PROJECT_ROOT))
++
++
++@dataclass
++class CheckResult:
++    name: str
++    status: str
++    detail: str
++
++
++@dataclass
++class PreflightReport:
++    parser: str
++    parse_method: str
++    paths: list[str]
++    generated_at: str = field(
++        default_factory=lambda: datetime.now(timezone.utc).isoformat()
++    )
++    checks: list[CheckResult] = field(default_factory=list)
++    supported_files: list[str] = field(default_factory=list)
++    unsupported_files: list[str] = field(default_factory=list)
++
++    def add(self, name: str, status: str, detail: str) -> None:
++        self.checks.append(CheckResult(name=name, status=status, detail=detail))
++
++    @property
++    def blockers(self) -> list[CheckResult]:
++        return [check for check in self.checks if check.status == "fail"]
++
++    @property
++    def warnings(self) -> list[CheckResult]:
++        return [check for check in self.checks if check.status == "warn"]
++
++    @property
++    def ready(self) -> bool:
++        return not self.blockers
++
++    def as_dict(self) -> dict[str, Any]:
++        return {
++            "generated_at": self.generated_at,
++            "ready": self.ready,
++            "parser": self.parser,
++            "parse_method": self.parse_method,
++            "paths": self.paths,
++            "supported_files": self.supported_files,
++            "unsupported_files": self.unsupported_files,
++            "summary": {
++                "passed": len([c for c in self.checks if c.status == "pass"]),
++                "warnings": len(self.warnings),
++                "blockers": len(self.blockers),
++                "supported_files": len(self.supported_files),
++                "unsupported_files": len(self.unsupported_files),
++            },
++            "checks": [check.__dict__ for check in self.checks],
++        }
++
++    def to_markdown(self) -> str:
++        status = "ready" if self.ready else "blocked"
++        lines = [
++            "# RAG-Anything Preflight Report",
++            "",
++            f"- Generated at: `{self.generated_at}`",
++            f"- Status: `{status}`",
++            f"- Parser: `{self.parser}`",
++            f"- Parse method: `{self.parse_method}`",
++            f"- Input paths: `{', '.join(self.paths)}`",
++            f"- Supported files: {len(self.supported_files)}",
++            f"- Unsupported files: {len(self.unsupported_files)}",
++            "",
++            "## Checks",
++            "",
++            "| Status | Check | Detail |",
++            "| --- | --- | --- |",
++        ]
++        for check in self.checks:
++            detail = check.detail.replace("|", "\\|")
++            lines.append(f"| `{check.status}` | {check.name} | {detail} |")
++        lines.append("")
++        if self.supported_files:
++            lines.extend(["## Supported Files", ""])
++            lines.extend(f"- `{path}`" for path in self.supported_files[:50])
++            if len(self.supported_files) > 50:
++                lines.append(f"- ... {len(self.supported_files) - 50} more")
++            lines.append("")
++        return "\n".join(lines)
++
++    def to_text(self) -> str:
++        status = "READY" if self.ready else "BLOCKED"
++        lines = [
++            f"RAG-Anything preflight: {status}",
++            f"Parser: {self.parser}",
++            f"Parse method: {self.parse_method}",
++            f"Supported files: {len(self.supported_files)}",
++            f"Unsupported files: {len(self.unsupported_files)}",
++            "",
++        ]
++        for check in self.checks:
++            lines.append(f"[{check.status.upper()}] {check.name}: {check.detail}")
++        return "\n".join(lines)
++
++
++def load_env_file(path: Path) -> dict[str, str]:
++    values: dict[str, str] = {}
++    if not path.exists():
++        return values
++
++    for raw_line in path.read_text(encoding="utf-8").splitlines():
++        line = raw_line.strip()
++        if not line or line.startswith("#") or "=" not in line:
++            continue
++        key, value = line.split("=", 1)
++        values[key.strip()] = value.strip().strip("'\"")
++    return values
++
++
++def env_get(env_file_values: dict[str, str], key: str, default: str | None = None) -> str | None:
++    return os.getenv(key, env_file_values.get(key, default))
++
++
++def resolve_path(path_text: str) -> Path:
++    path = Path(path_text).expanduser()
++    return path if path.is_absolute() else path.resolve()
++
++
++def parse_extensions(value: str | None) -> list[str]:
++    if not value:
++        return DEFAULT_EXTENSIONS
++    extensions = []
++    for item in value.split(","):
++        suffix = item.strip().lower()
++        if not suffix:
++            continue
++        extensions.append(suffix if suffix.startswith(".") else f".{suffix}")
++    return extensions or DEFAULT_EXTENSIONS
++
++
++def collect_input_files(
++    paths: list[str],
++    supported_extensions: set[str],
++    recursive: bool,
++    report: PreflightReport,
++) -> None:
++    missing: list[str] = []
++    for path_text in paths:
++        parsed = urlparse(path_text)
++        if parsed.scheme in {"http", "https"} and parsed.netloc:
++            suffix = Path(parsed.path).suffix.lower()
++            if suffix in supported_extensions:
++                report.supported_files.append(path_text)
++            else:
++                report.unsupported_files.append(path_text)
++            continue
++
++        path = resolve_path(path_text)
++        if path.is_file():
++            add_file(path, supported_extensions, report)
++        elif path.is_dir():
++            iterator = path.rglob("*") if recursive else path.glob("*")
++            for child in iterator:
++                if child.is_file():
++                    add_file(child, supported_extensions, report)
++        else:
++            missing.append(str(path))
++
++    if missing:
++        report.add("input_paths", "fail", "Missing path(s): " + "; ".join(missing[:8]))
++    else:
++        report.add("input_paths", "pass", "All input paths exist or are valid URLs")
++
++    if report.supported_files:
++        report.add(
++            "supported_inputs",
++            "pass",
++            f"Found {len(report.supported_files)} supported file(s)",
++        )
++    elif paths:
++        report.add("supported_inputs", "fail", "No supported files found")
++    else:
++        report.add("supported_inputs", "warn", "No input paths were provided")
++
++    if report.unsupported_files:
++        report.add(
++            "unsupported_inputs",
++            "warn",
++            f"{len(report.unsupported_files)} unsupported file(s) will be skipped",
++        )
++    else:
++        report.add("unsupported_inputs", "pass", "No unsupported files found")
++
++
++def add_file(path: Path, supported_extensions: set[str], report: PreflightReport) -> None:
++    target = str(path)
++    if path.suffix.lower() in supported_extensions:
++        report.supported_files.append(target)
++        if path.stat().st_size == 0:
++            report.add("empty_input_file", "fail", f"Input file is empty: {target}")
++    else:
++        report.unsupported_files.append(target)
++
++
++def check_parser(parser: str, parse_method: str, report: PreflightReport) -> None:
++    if parser not in PARSER_HINTS:
++        report.add(
++            "parser_selection",
++            "fail",
++            f"Unsupported parser `{parser}`. Built-ins: {', '.join(PARSER_HINTS)}",
++        )
++        return
++
++    report.add("parser_selection", "pass", PARSER_HINTS[parser]["note"])
++
++    if parse_method not in {"auto", "txt", "ocr"}:
++        report.add("parse_method", "fail", "`--parse-method` must be auto, txt, or ocr")
++    else:
++        report.add("parse_method", "pass", f"Parse method is `{parse_method}`")
++
++    missing_packages = [
++        package
++        for package in PARSER_HINTS[parser]["packages"]
++        if importlib.util.find_spec(package) is None
++    ]
++    missing_commands = [
++        command
++        for command in PARSER_HINTS[parser]["commands"]
++        if shutil.which(command) is None
++    ]
++
++    if missing_packages or missing_commands:
++        details = []
++        if missing_packages:
++            details.append("missing package(s): " + ", ".join(missing_packages))
++        if missing_commands:
++            details.append("missing command(s): " + ", ".join(missing_commands))
++        report.add("parser_runtime", "fail", "; ".join(details))
++    else:
++        report.add("parser_runtime", "pass", f"`{parser}` runtime appears available")
++
++
++def check_file_type_sidecars(parser: str, report: PreflightReport) -> None:
++    suffixes = {Path(path).suffix.lower() for path in report.supported_files}
++
++    if suffixes & OFFICE_EXTENSIONS and parser == "mineru":
++        if shutil.which("libreoffice") is None and shutil.which("soffice") is None:
++            report.add(
++                "office_conversion",
++                "warn",
++                "Office files are present. MinerU conversion may require LibreOffice/soffice.",
++            )
++        else:
++            report.add("office_conversion", "pass", "LibreOffice/soffice is available")
++
++    if suffixes & TEXT_EXTENSIONS and importlib.util.find_spec("reportlab") is None:
++        report.add(
++            "text_conversion",
++            "warn",
++            "Text/Markdown inputs are present. Install `reportlab` if using MinerU text-to-PDF conversion.",
++        )
++
++    if suffixes & IMAGE_EXTENSIONS and importlib.util.find_spec("PIL") is None:
++        report.add(
++            "image_support",
++            "warn",
++            "Image inputs are present but Pillow is not importable.",
++        )
++
++
++def check_core_dependencies(report: PreflightReport) -> None:
++    missing = []
++    for module_name in ("raganything", "lightrag", "tqdm"):
++        if importlib.util.find_spec(module_name) is None:
++            missing.append(module_name)
++
++    if missing:
++        report.add(
++            "core_dependencies",
++            "fail",
++            "Missing package(s): " + ", ".join(missing) + ". Install with `pip install -e .`.",
++        )
++    else:
++        report.add("core_dependencies", "pass", "Core Python dependencies are importable")
++
++
++def check_env(env_file_values: dict[str, str], report: PreflightReport) -> None:
++    llm_binding = (env_get(env_file_values, "LLM_BINDING", "openai") or "openai").lower()
++    embedding_binding = (
++        env_get(env_file_values, "EMBEDDING_BINDING", "openai") or "openai"
++    ).lower()
++    llm_host = env_get(env_file_values, "LLM_BINDING_HOST")
++    embedding_host = env_get(env_file_values, "EMBEDDING_BINDING_HOST")
++    llm_key = env_get(env_file_values, "LLM_BINDING_API_KEY")
++    embedding_key = env_get(env_file_values, "EMBEDDING_BINDING_API_KEY")
++
++    check_binding("llm", llm_binding, llm_host, llm_key, report)
++    check_binding("embedding", embedding_binding, embedding_host, embedding_key, report)
++
++    numeric_specs = {
++        "MAX_ASYNC": (1, None),
++        "MAX_CONCURRENT_FILES": (1, None),
++        "EMBEDDING_DIM": (1, None),
++        "CONTEXT_WINDOW": (0, None),
++        "MAX_CONTEXT_TOKENS": (1, None),
++    }
++    errors = []
++    for name, (minimum, maximum) in numeric_specs.items():
++        raw = env_get(env_file_values, name)
++        if raw is None:
++            continue
++        try:
++            parsed = int(raw)
++        except ValueError:
++            errors.append(f"{name} must be an integer")
++            continue
++        if parsed < minimum:
++            errors.append(f"{name} must be >= {minimum}")
++        if maximum is not None and parsed > maximum:
++            errors.append(f"{name} must be <= {maximum}")
++
++    if errors:
++        report.add("numeric_environment", "fail", "; ".join(errors[:8]))
++    else:
++        report.add("numeric_environment", "pass", "Numeric environment variables look valid")
++
++
++def check_binding(
++    label: str,
++    binding: str,
++    host: str | None,
++    key: str | None,
++    report: PreflightReport,
++) -> None:
++    if binding not in LOCAL_BINDINGS | CLOUD_BINDINGS:
++        report.add(
++            f"{label}_binding",
++            "warn",
++            f"Unknown {label} binding `{binding}`. Continue only if this is a custom binding.",
++        )
++    else:
++        report.add(f"{label}_binding", "pass", f"{label} binding is `{binding}`")
++
++    if host:
++        parsed = urlparse(host)
++        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
++            report.add(f"{label}_host", "fail", f"{label} host is not an absolute http(s) URL")
++        else:
++            report.add(f"{label}_host", "pass", f"{label} host URL format is valid")
++    elif binding in CLOUD_BINDINGS:
++        report.add(f"{label}_host", "warn", f"{label} host is not set")
++
++    if binding in CLOUD_BINDINGS and (key or "").strip() in PLACEHOLDER_VALUES:
++        report.add(
++            f"{label}_api_key",
++            "fail",
++            f"{label} API key is missing or still a placeholder",
++        )
++    elif (key or "").strip() in PLACEHOLDER_VALUES:
++        report.add(
++            f"{label}_api_key",
++            "warn",
++            f"{label} API key is empty/placeholder; this may be okay for local providers",
++        )
++    else:
++        report.add(f"{label}_api_key", "pass", f"{label} API key is configured")
++
++
++def check_output_paths(output_dir: str, working_dir: str, report: PreflightReport) -> None:
++    for label, raw_path in (("output_dir", output_dir), ("working_dir", working_dir)):
++        path = resolve_path(raw_path)
++        parent = path if path.exists() and path.is_dir() else path.parent
++        if parent.exists() and os.access(parent, os.W_OK):
++            report.add(label, "pass", f"{label} parent is writable: {parent}")
++        else:
++            report.add(label, "fail", f"{label} parent is not writable or missing: {parent}")
++
++
++def write_outputs(report: PreflightReport, json_path: Path | None, md_path: Path | None) -> None:
++    if json_path:
++        json_path.parent.mkdir(parents=True, exist_ok=True)
++        json_path.write_text(
++            json.dumps(report.as_dict(), indent=2, ensure_ascii=False) + "\n",
++            encoding="utf-8",
++        )
++    if md_path:
++        md_path.parent.mkdir(parents=True, exist_ok=True)
++        md_path.write_text(report.to_markdown(), encoding="utf-8")
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description="Run static readiness checks before RAG-Anything parsing or examples."
++    )
++    parser.add_argument("--paths", nargs="*", default=[], help="Input files/directories/URLs to scan.")
++    parser.add_argument("--parser", default=os.getenv("PARSER", "mineru"))
++    parser.add_argument("--parse-method", default=os.getenv("PARSE_METHOD", "auto"))
++    parser.add_argument("--env-file", default=".env", help="Optional env file to inspect.")
++    parser.add_argument("--output-dir", default=os.getenv("OUTPUT_DIR", "./output"))
++    parser.add_argument("--working-dir", default=os.getenv("WORKING_DIR", "./rag_storage"))
++    parser.add_argument(
++        "--recursive",
++        action=argparse.BooleanOptionalAction,
++        default=True,
++        help="Search directories recursively.",
++    )
++    parser.add_argument("--output-json", help="Optional path for a JSON report.")
++    parser.add_argument("--output-md", help="Optional path for a Markdown report.")
++    parser.add_argument("--strict", action="store_true", help="Exit 1 on blocking failures.")
++    return parser
++
++
++def main() -> int:
++    args = build_parser().parse_args()
++    env_values = load_env_file(resolve_path(args.env_file))
++    supported_extensions = set(
++        parse_extensions(env_get(env_values, "SUPPORTED_FILE_EXTENSIONS"))
++    )
++
++    report = PreflightReport(
++        parser=args.parser,
++        parse_method=args.parse_method,
++        paths=args.paths,
++    )
++
++    collect_input_files(args.paths, supported_extensions, args.recursive, report)
++    check_core_dependencies(report)
++    check_parser(args.parser, args.parse_method, report)
++    check_file_type_sidecars(args.parser, report)
++    check_env(env_values, report)
++    check_output_paths(args.output_dir, args.working_dir, report)
++
++    write_outputs(
++        report,
++        resolve_path(args.output_json) if args.output_json else None,
++        resolve_path(args.output_md) if args.output_md else None,
++    )
++
++    print(report.to_text())
++
++    if args.strict and not report.ready:
++        return 1
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+-- 
+2.39.5 (Apple Git-154)
+

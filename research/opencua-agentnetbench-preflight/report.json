@@ -1,0 +1,82 @@
+{
+  "generated_at": "2026-05-04T14:23:22.535075+00:00",
+  "ready": true,
+  "data_dir": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/OpenCUA/evaluation/agentnetbench/sample_data",
+  "image_dir": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/OpenCUA/evaluation/agentnetbench/sample_data/images",
+  "model": "opencua-7b",
+  "base_url": "http://localhost:8000/v1",
+  "scanned_trajectories": 5,
+  "scanned_steps": 54,
+  "summary": {
+    "passed": 12,
+    "warnings": 1,
+    "blockers": 0
+  },
+  "checks": [
+    {
+      "name": "trajectory_json",
+      "status": "pass",
+      "detail": "Parsed 5 JSON file(s)"
+    },
+    {
+      "name": "image_dir",
+      "status": "pass",
+      "detail": "Image directory exists: /Users/fu/Desktop/ai study/builds/hku-ai-papers/OpenCUA/evaluation/agentnetbench/sample_data/images"
+    },
+    {
+      "name": "trajectory_required_fields",
+      "status": "pass",
+      "detail": "All required trajectory fields are present"
+    },
+    {
+      "name": "trajectory_step_shapes",
+      "status": "pass",
+      "detail": "Step and alternative-option shapes look valid"
+    },
+    {
+      "name": "trajectory_images",
+      "status": "pass",
+      "detail": "Every step image exists in the image directory"
+    },
+    {
+      "name": "action_coordinates",
+      "status": "pass",
+      "detail": "Relative coordinates are within [0, 1]"
+    },
+    {
+      "name": "action_types",
+      "status": "pass",
+      "detail": "All action types are recognized by the static checker"
+    },
+    {
+      "name": "duplicate_task_ids",
+      "status": "pass",
+      "detail": "No duplicate task_id values"
+    },
+    {
+      "name": "runtime_dependencies",
+      "status": "pass",
+      "detail": "All AgentNetBench runtime packages are importable: openai>=1.0.0, pillow"
+    },
+    {
+      "name": "optional_dependencies",
+      "status": "warn",
+      "detail": "Missing optional package(s): editdistance. The evaluator can install editdistance on demand, but preinstalling it avoids runtime side effects."
+    },
+    {
+      "name": "agent_selection",
+      "status": "pass",
+      "detail": "`opencua-7b` selects the OpenCUA agent"
+    },
+    {
+      "name": "base_url",
+      "status": "pass",
+      "detail": "Base URL has a valid http(s) format"
+    },
+    {
+      "name": "api_key",
+      "status": "pass",
+      "detail": "API key is configured"
+    }
+  ]
+}

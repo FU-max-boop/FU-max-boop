@@ -1,0 +1,113 @@
+{
+  "generated_at": "2026-05-04T14:25:42.653840+00:00",
+  "ready": false,
+  "parser": "mineru",
+  "parse_method": "auto",
+  "paths": [
+    "README.md",
+    "docs"
+  ],
+  "supported_files": [
+    "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/README.md",
+    "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/docs/offline_setup.md",
+    "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/docs/batch_processing.md",
+    "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/docs/enhanced_markdown.md",
+    "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/docs/vllm_integration.md",
+    "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/docs/context_aware_processing.md"
+  ],
+  "unsupported_files": [],
+  "summary": {
+    "passed": 10,
+    "warnings": 3,
+    "blockers": 4,
+    "supported_files": 6,
+    "unsupported_files": 0
+  },
+  "checks": [
+    {
+      "name": "input_paths",
+      "status": "pass",
+      "detail": "All input paths exist or are valid URLs"
+    },
+    {
+      "name": "supported_inputs",
+      "status": "pass",
+      "detail": "Found 6 supported file(s)"
+    },
+    {
+      "name": "unsupported_inputs",
+      "status": "pass",
+      "detail": "No unsupported files found"
+    },
+    {
+      "name": "core_dependencies",
+      "status": "fail",
+      "detail": "Missing package(s): lightrag. Install with `pip install -e .`."
+    },
+    {
+      "name": "parser_selection",
+      "status": "pass",
+      "detail": "MinerU parser; Office files may also require LibreOffice/soffice."
+    },
+    {
+      "name": "parse_method",
+      "status": "pass",
+      "detail": "Parse method is `auto`"
+    },
+    {
+      "name": "parser_runtime",
+      "status": "fail",
+      "detail": "missing package(s): mineru; missing command(s): mineru"
+    },
+    {
+      "name": "text_conversion",
+      "status": "warn",
+      "detail": "Text/Markdown inputs are present. Install `reportlab` if using MinerU text-to-PDF conversion."
+    },
+    {
+      "name": "llm_binding",
+      "status": "pass",
+      "detail": "llm binding is `openai`"
+    },
+    {
+      "name": "llm_host",
+      "status": "warn",
+      "detail": "llm host is not set"
+    },
+    {
+      "name": "llm_api_key",
+      "status": "fail",
+      "detail": "llm API key is missing or still a placeholder"
+    },
+    {
+      "name": "embedding_binding",
+      "status": "pass",
+      "detail": "embedding binding is `openai`"
+    },
+    {
+      "name": "embedding_host",
+      "status": "warn",
+      "detail": "embedding host is not set"
+    },
+    {
+      "name": "embedding_api_key",
+      "status": "fail",
+      "detail": "embedding API key is missing or still a placeholder"
+    },
+    {
+      "name": "numeric_environment",
+      "status": "pass",
+      "detail": "Numeric environment variables look valid"
+    },
+    {
+      "name": "output_dir",
+      "status": "pass",
+      "detail": "output_dir parent is writable: /Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything"
+    },
+    {
+      "name": "working_dir",
+      "status": "pass",
+      "detail": "working_dir parent is writable: /Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything"
+    }
+  ]
+}
