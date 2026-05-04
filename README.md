@@ -35,9 +35,27 @@ The project includes:
 
 ### [HKU AI Paper Contribution Batch](research/hku-ai-paper-scout)
 
-I scanned recent HKU AI projects and built small, reviewable research-engineering contributions for the ones where setup reliability matters: OpenCUA, RAG-Anything, DeepResearch-Eval, LightRAG, Spider2, and Claw-Eval.
+I scanned recent HKU AI projects and built small, reviewable research-engineering contributions for the ones where setup reliability matters: DeepCode, AI-Researcher, OpenCUA, RAG-Anything, DeepResearch-Eval, LightRAG, Spider2, and Claw-Eval.
 
 The common pattern is simple: before a researcher spends model budget or debugging time, run a static preflight that separates packaging/setup blockers from real model failures.
+
+### [DeepCode Config Preflight](research/deepcode-config-preflight)
+
+A contribution around agentic coding reproducibility. I added a static preflight
+for `deepcode_config.json` that validates provider keys, environment references,
+core dependencies, MCP commands, workspace paths, and model-run setup before the
+CLI/UI starts.
+
+Published branch: https://github.com/FU-max-boop/DeepCode/tree/docs/deepcode-config-preflight
+
+### [AI-Researcher Benchmark Preflight](research/ai-researcher-benchmark-preflight)
+
+A contribution around autonomous scientific-discovery benchmark runs. I added a
+static preflight for `.env`, benchmark instance schema, category metaprompts,
+workspace/cache paths, Docker command availability, and runtime dependencies,
+plus a README correction for the Docker image tag.
+
+Published branch: https://github.com/FU-max-boop/AI-Researcher/tree/docs/researcher-benchmark-preflight
 
 ### [OpenCUA AgentNetBench Preflight](research/opencua-agentnetbench-preflight)
 

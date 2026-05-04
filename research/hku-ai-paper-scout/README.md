@@ -15,6 +15,8 @@ I prioritized projects that were:
 
 | Project | Contribution | Published branch |
 | --- | --- | --- |
+| DeepCode | Config preflight for provider keys, MCP commands, dependency readiness, workspace paths, and model-run setup | https://github.com/FU-max-boop/DeepCode/tree/docs/deepcode-config-preflight |
+| AI-Researcher | Benchmark/env preflight plus README Docker image typo correction for autonomous research-agent runs | https://github.com/FU-max-boop/AI-Researcher/tree/docs/researcher-benchmark-preflight |
 | OpenCUA / AgentNetBench | Static preflight for trajectory JSON, screenshots, action schemas, coordinates, dependencies, model selection, endpoint config | https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight |
 | RAG-Anything | Zero-API-call preflight for inputs, parser/runtime, LightRAG install state, LLM/embedding env, numeric config, output paths | https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight |
 | DeepResearch-Eval | ReportEval preflight plus README correction from topic-only input to report JSONL input for quality scoring | https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight |
@@ -26,8 +28,6 @@ I prioritized projects that were:
 
 Strong next targets from the scan:
 
-- DeepCode: coding-agent / repository-level software engineering evaluation
-- AI-Researcher: research-agent workflow reliability and artifact validation
 - AutoAgent / Auto-Deep-Research: autonomous research pipeline reproducibility
 - GUIOdyssey / OSWorld-G / AgentTrek: GUI-agent benchmark readiness
 - VideoRAG / MiniRAG: retrieval benchmark setup and evaluation hygiene

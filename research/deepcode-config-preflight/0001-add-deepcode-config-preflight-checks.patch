@@ -1,0 +1,452 @@
+From 597f68a6a9d1c91f6c96f6e944f8687bc1cc8541 Mon Sep 17 00:00:00 2001
+From: FU-max-boop <ht3fudatou@163.com>
+Date: Mon, 4 May 2026 22:39:12 +0800
+Subject: [PATCH] Add DeepCode config preflight checks
+
+---
+ README.md             |  16 ++
+ preflight_deepcode.py | 405 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 421 insertions(+)
+ create mode 100644 preflight_deepcode.py
+
+diff --git a/README.md b/README.md
+index 0f0505c..af0653d 100644
+--- a/README.md
++++ b/README.md
+@@ -752,6 +752,22 @@ reloads the runtime for newly started workflows.
+ 
+ </details>
+ 
++#### ✅ Optional Configuration Preflight
++
++Before starting the CLI/UI or launching MCP servers, validate the local config,
++provider keys, core dependencies, workspace path, and MCP command availability:
++
++```bash
++python preflight_deepcode.py \
++  --config deepcode_config.json \
++  --output-json logs/preflight_deepcode.json \
++  --output-md logs/preflight_deepcode.md
++```
++
++Use `--strict` in CI to exit with a non-zero status when blockers are found. The
++preflight does not call LLM providers, install packages, start MCP servers, or
++launch Docker.
++
+ #### 🤖 LLM Provider *(optional)*
+ 
+ The provider is inferred from the `model` slug (`openai/...`, `anthropic/...`, `gemini/...`, etc.). To force a specific backend, set `agents.defaults.provider`:
+diff --git a/preflight_deepcode.py b/preflight_deepcode.py
+new file mode 100644
+index 0000000..270fd3a
+--- /dev/null
++++ b/preflight_deepcode.py
+@@ -0,0 +1,405 @@
++#!/usr/bin/env python3
++"""
++Static preflight checks for DeepCode configuration.
++
++The script validates the local config file, referenced environment variables,
++provider readiness, workspace paths, MCP server commands, and core Python
++dependencies before starting the CLI/UI or spending model budget. It does not
++call LLM providers, start MCP servers, install packages, or launch Docker.
++"""
++
++from __future__ import annotations
++
++import argparse
++import importlib.util
++import json
++import os
++import re
++import shutil
++import sys
++from dataclasses import dataclass, field
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlparse
++
++
++ENV_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
++
++CORE_PACKAGES = {
++    "aiofiles": "aiofiles",
++    "aiohttp": "aiohttp",
++    "fastapi": "fastapi",
++    "httpx": "httpx",
++    "json_repair": "json-repair",
++    "loguru": "loguru",
++    "mcp": "mcp",
++    "openai": "openai",
++    "pydantic_settings": "pydantic-settings",
++    "streamlit": "streamlit",
++    "uvicorn": "uvicorn",
++}
++
++LOCAL_PROVIDERS = {"ollama", "vllm"}
++PLACEHOLDERS = {
++    "",
++    "your_openai_api_key",
++    "your_openrouter_key",
++    "your_api_key",
++    "your-api-key",
++    "sk-...",
++}
++
++
++@dataclass
++class CheckResult:
++    name: str
++    status: str
++    detail: str
++
++
++@dataclass
++class PreflightReport:
++    config_path: str
++    generated_at: str = field(
++        default_factory=lambda: datetime.now(timezone.utc).isoformat()
++    )
++    checks: list[CheckResult] = field(default_factory=list)
++
++    def add(self, name: str, status: str, detail: str) -> None:
++        self.checks.append(CheckResult(name=name, status=status, detail=detail))
++
++    @property
++    def blockers(self) -> list[CheckResult]:
++        return [check for check in self.checks if check.status == "fail"]
++
++    @property
++    def warnings(self) -> list[CheckResult]:
++        return [check for check in self.checks if check.status == "warn"]
++
++    @property
++    def ready(self) -> bool:
++        return not self.blockers
++
++    def as_dict(self) -> dict[str, Any]:
++        return {
++            "generated_at": self.generated_at,
++            "ready": self.ready,
++            "config_path": self.config_path,
++            "summary": {
++                "passed": len([c for c in self.checks if c.status == "pass"]),
++                "warnings": len(self.warnings),
++                "blockers": len(self.blockers),
++            },
++            "checks": [check.__dict__ for check in self.checks],
++        }
++
++    def to_markdown(self) -> str:
++        status = "ready" if self.ready else "blocked"
++        lines = [
++            "# DeepCode Preflight Report",
++            "",
++            f"- Generated at: `{self.generated_at}`",
++            f"- Status: `{status}`",
++            f"- Config path: `{self.config_path}`",
++            "",
++            "| Status | Check | Detail |",
++            "| --- | --- | --- |",
++        ]
++        for check in self.checks:
++            detail = check.detail.replace("|", "\\|")
++            lines.append(f"| `{check.status}` | {check.name} | {detail} |")
++        lines.append("")
++        return "\n".join(lines)
++
++    def to_text(self) -> str:
++        status = "READY" if self.ready else "BLOCKED"
++        lines = [
++            f"DeepCode preflight: {status}",
++            f"Config: {self.config_path}",
++            "",
++        ]
++        for check in self.checks:
++            lines.append(f"[{check.status.upper()}] {check.name}: {check.detail}")
++        return "\n".join(lines)
++
++
++def resolve_path(path_text: str | None) -> Path | None:
++    if not path_text:
++        return None
++    path = Path(path_text).expanduser()
++    return path if path.is_absolute() else path.resolve()
++
++
++def load_config(config_path: Path, report: PreflightReport) -> dict[str, Any] | None:
++    if not config_path.exists() or not config_path.is_file():
++        report.add("config_file", "fail", f"Config file not found: {config_path}")
++        return None
++
++    try:
++        config = json.loads(config_path.read_text(encoding="utf-8"))
++    except json.JSONDecodeError as exc:
++        report.add("config_json", "fail", f"Invalid JSON: {exc}")
++        return None
++
++    report.add("config_json", "pass", "Configuration JSON parsed successfully")
++    if config_path.name == "deepcode_config.json":
++        report.add("config_name", "pass", "Using active deepcode_config.json")
++    else:
++        report.add("config_name", "warn", f"Using non-default config file: {config_path.name}")
++    return config
++
++
++def walk_values(value: Any) -> list[str]:
++    values: list[str] = []
++    if isinstance(value, str):
++        values.append(value)
++    elif isinstance(value, dict):
++        for item in value.values():
++            values.extend(walk_values(item))
++    elif isinstance(value, list):
++        for item in value:
++            values.extend(walk_values(item))
++    return values
++
++
++def check_env_refs(config: dict[str, Any], report: PreflightReport) -> None:
++    refs = sorted({match.group(1) for text in walk_values(config) for match in ENV_REF_RE.finditer(text)})
++    if not refs:
++        report.add("env_refs", "pass", "No ${ENV_VAR} references found")
++        return
++
++    missing = [name for name in refs if not os.getenv(name)]
++    if missing:
++        report.add("env_refs", "fail", "Unset environment reference(s): " + ", ".join(missing))
++    else:
++        report.add("env_refs", "pass", "All environment references are set: " + ", ".join(refs))
++
++
++def is_placeholder(value: str | None) -> bool:
++    return (value or "").strip().lower() in PLACEHOLDERS
++
++
++def resolve_env_string(value: Any) -> str | None:
++    if not isinstance(value, str):
++        return None
++    matches = ENV_REF_RE.findall(value)
++    if len(matches) == 1 and value.strip() == f"${{{matches[0]}}}":
++        return os.getenv(matches[0])
++    return value
++
++
++def provider_from_model(model: str | None, providers: dict[str, Any]) -> str | None:
++    if not model or "/" not in model:
++        return None
++    prefix = model.split("/", 1)[0]
++    return prefix if prefix in providers else None
++
++
++def phase_provider(phase_name: str, agents: dict[str, Any], providers: dict[str, Any]) -> tuple[str | None, str | None]:
++    defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
++    phase = agents.get(phase_name) if isinstance(agents.get(phase_name), dict) else {}
++    provider = phase.get("provider") or defaults.get("provider")
++    model = phase.get("model") or defaults.get("model")
++    if provider == "auto":
++        provider = provider_from_model(model, providers)
++    return provider, model
++
++
++def check_providers(config: dict[str, Any], report: PreflightReport) -> None:
++    providers = config.get("providers")
++    agents = config.get("agents")
++    if not isinstance(providers, dict) or not providers:
++        report.add("providers", "fail", "Missing non-empty `providers` object")
++        return
++    if not isinstance(agents, dict):
++        report.add("agents", "fail", "Missing `agents` object")
++        return
++
++    configured = sorted(providers.keys())
++    report.add("providers", "pass", "Configured provider entries: " + ", ".join(configured))
++
++    used: list[str] = []
++    ambiguous: list[str] = []
++    for phase in ("defaults", "planning", "implementation"):
++        provider, model = phase_provider(phase, agents, providers)
++        if provider:
++            used.append(provider)
++        elif model:
++            ambiguous.append(f"{phase}:{model}")
++
++    if ambiguous:
++        report.add(
++            "agent_model_provider",
++            "warn",
++            "Could not infer provider for model slug(s): " + ", ".join(ambiguous),
++        )
++
++    if not used:
++        report.add("active_provider", "warn", "No active provider inferred from agent model/provider settings")
++        return
++
++    missing_entries = [provider for provider in sorted(set(used)) if provider not in providers]
++    if missing_entries:
++        report.add("active_provider", "fail", "Active provider(s) missing config entry: " + ", ".join(missing_entries))
++        return
++
++    missing_keys: list[str] = []
++    invalid_bases: list[str] = []
++    for provider in sorted(set(used)):
++        provider_cfg = providers.get(provider) if isinstance(providers.get(provider), dict) else {}
++        api_key = resolve_env_string(provider_cfg.get("apiKey"))
++        api_base = resolve_env_string(provider_cfg.get("apiBase"))
++        if provider not in LOCAL_PROVIDERS and is_placeholder(api_key):
++            missing_keys.append(provider)
++        if api_base:
++            parsed = urlparse(api_base)
++            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
++                invalid_bases.append(provider)
++
++    if missing_keys:
++        report.add("active_provider_keys", "fail", "Missing or placeholder API key for active provider(s): " + ", ".join(missing_keys))
++    else:
++        report.add("active_provider_keys", "pass", "Active provider API-key settings look present")
++
++    if invalid_bases:
++        report.add("provider_api_base", "fail", "Invalid apiBase URL for provider(s): " + ", ".join(invalid_bases))
++    else:
++        report.add("provider_api_base", "pass", "Configured provider apiBase values look valid")
++
++
++def check_dependencies(report: PreflightReport) -> None:
++    missing = [
++        package
++        for module, package in CORE_PACKAGES.items()
++        if importlib.util.find_spec(module) is None
++    ]
++    if missing:
++        report.add("python_dependencies", "fail", "Missing package(s): " + ", ".join(missing))
++    else:
++        report.add("python_dependencies", "pass", "Core Python packages are importable")
++
++
++def command_exists(command: str) -> bool:
++    if command == "python":
++        return bool(sys.executable)
++    return shutil.which(command) is not None
++
++
++def check_mcp_servers(config: dict[str, Any], config_dir: Path, report: PreflightReport) -> None:
++    tools = config.get("tools") if isinstance(config.get("tools"), dict) else {}
++    servers = tools.get("mcpServers") if isinstance(tools.get("mcpServers"), dict) else {}
++    if not servers:
++        report.add("mcp_servers", "warn", "No MCP servers configured")
++        return
++
++    missing_commands: list[str] = []
++    missing_files: list[str] = []
++    for name, server in servers.items():
++        if not isinstance(server, dict):
++            continue
++        command = str(server.get("command") or "").strip()
++        if command and not command_exists(command):
++            missing_commands.append(f"{name}:{command}")
++        args = server.get("args") if isinstance(server.get("args"), list) else []
++        for arg in args:
++            if isinstance(arg, str) and arg.endswith(".py"):
++                script_path = (config_dir / arg).resolve()
++                if not script_path.exists():
++                    missing_files.append(f"{name}:{arg}")
++
++    if missing_commands:
++        report.add("mcp_commands", "fail", "Missing command(s): " + ", ".join(missing_commands))
++    else:
++        report.add("mcp_commands", "pass", "All configured MCP server commands are available")
++
++    if missing_files:
++        report.add("mcp_script_files", "fail", "Missing MCP script file(s): " + ", ".join(missing_files))
++    else:
++        report.add("mcp_script_files", "pass", "Configured Python MCP server scripts exist")
++
++    default_search = tools.get("defaultSearchServer")
++    if default_search and default_search not in servers:
++        report.add("default_search_server", "fail", f"defaultSearchServer `{default_search}` is not in tools.mcpServers")
++    elif default_search:
++        report.add("default_search_server", "pass", f"defaultSearchServer `{default_search}` is configured")
++    else:
++        report.add("default_search_server", "warn", "No defaultSearchServer configured")
++
++
++def check_workspace(config: dict[str, Any], config_dir: Path, report: PreflightReport) -> None:
++    workspace = config.get("workspace") if isinstance(config.get("workspace"), dict) else {}
++    root_text = str(workspace.get("root") or "./deepcode_lab")
++    root = Path(root_text).expanduser()
++    if not root.is_absolute():
++        root = (config_dir / root).resolve()
++
++    existing = root if root.exists() else root.parent
++    while not existing.exists() and existing != existing.parent:
++        existing = existing.parent
++
++    if existing.exists() and os.access(existing, os.W_OK):
++        if root.exists() and not root.is_dir():
++            report.add("workspace_root", "fail", f"Workspace root exists but is not a directory: {root}")
++        elif root.exists():
++            report.add("workspace_root", "pass", f"Workspace root is writable: {root}")
++        else:
++            report.add("workspace_root", "pass", f"Workspace root can be created under writable directory: {existing}")
++    else:
++        report.add("workspace_root", "fail", f"Workspace root parent is not writable: {root.parent}")
++
++    max_input_mb = workspace.get("maxInputMb", 100)
++    if isinstance(max_input_mb, (int, float)) and max_input_mb > 0:
++        report.add("workspace_max_input", "pass", f"workspace.maxInputMb is {max_input_mb}")
++    else:
++        report.add("workspace_max_input", "fail", "workspace.maxInputMb must be a positive number")
++
++
++def write_outputs(report: PreflightReport, json_path: Path | None, md_path: Path | None) -> None:
++    if json_path:
++        json_path.parent.mkdir(parents=True, exist_ok=True)
++        json_path.write_text(
++            json.dumps(report.as_dict(), indent=2, ensure_ascii=False) + "\n",
++            encoding="utf-8",
++        )
++    if md_path:
++        md_path.parent.mkdir(parents=True, exist_ok=True)
++        md_path.write_text(report.to_markdown(), encoding="utf-8")
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(description="Preflight DeepCode configuration without starting services.")
++    parser.add_argument("--config", default="deepcode_config.json", help="Path to deepcode_config.json")
++    parser.add_argument("--output-json", help="Optional path for a JSON report")
++    parser.add_argument("--output-md", help="Optional path for a Markdown report")
++    parser.add_argument("--strict", action="store_true", help="Exit 1 on blocking failures")
++    return parser
++
++
++def main() -> int:
++    args = build_parser().parse_args()
++    config_path = resolve_path(args.config) or Path("deepcode_config.json").resolve()
++    report = PreflightReport(config_path=str(config_path))
++
++    config = load_config(config_path, report)
++    if config is not None:
++        check_env_refs(config, report)
++        check_providers(config, report)
++        check_dependencies(report)
++        check_mcp_servers(config, config_path.parent, report)
++        check_workspace(config, config_path.parent, report)
++
++    write_outputs(
++        report,
++        resolve_path(args.output_json) if args.output_json else None,
++        resolve_path(args.output_md) if args.output_md else None,
++    )
++
++    print(report.to_text())
++    if args.strict and not report.ready:
++        return 1
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+-- 
+2.39.5 (Apple Git-154)
+

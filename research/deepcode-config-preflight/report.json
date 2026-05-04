@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-05-04T14:38:49.343902+00:00",
+  "ready": false,
+  "config_path": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/DeepCode/deepcode_config.json.example",
+  "summary": {
+    "passed": 7,
+    "warnings": 1,
+    "blockers": 4
+  },
+  "checks": [
+    {
+      "name": "config_json",
+      "status": "pass",
+      "detail": "Configuration JSON parsed successfully"
+    },
+    {
+      "name": "config_name",
+      "status": "warn",
+      "detail": "Using non-default config file: deepcode_config.json.example"
+    },
+    {
+      "name": "env_refs",
+      "status": "fail",
+      "detail": "Unset environment reference(s): OPENAI_API_KEY"
+    },
+    {
+      "name": "providers",
+      "status": "pass",
+      "detail": "Configured provider entries: anthropic, dashscope, deepseek, gemini, ollama, openai, openrouter, vllm, zhipu"
+    },
+    {
+      "name": "active_provider_keys",
+      "status": "fail",
+      "detail": "Missing or placeholder API key for active provider(s): openai"
+    },
+    {
+      "name": "provider_api_base",
+      "status": "pass",
+      "detail": "Configured provider apiBase values look valid"
+    },
+    {
+      "name": "python_dependencies",
+      "status": "fail",
+      "detail": "Missing package(s): aiofiles, aiohttp, fastapi, json-repair, loguru, mcp, pydantic-settings, uvicorn"
+    },
+    {
+      "name": "mcp_commands",
+      "status": "fail",
+      "detail": "Missing command(s): fetch:uvx"
+    },
+    {
+      "name": "mcp_script_files",
+      "status": "pass",
+      "detail": "Configured Python MCP server scripts exist"
+    },
+    {
+      "name": "default_search_server",
+      "status": "pass",
+      "detail": "defaultSearchServer `filesystem` is configured"
+    },
+    {
+      "name": "workspace_root",
+      "status": "pass",
+      "detail": "Workspace root can be created under writable directory: /Users/fu/Desktop/ai study/builds/hku-ai-papers/DeepCode"
+    },
+    {
+      "name": "workspace_max_input",
+      "status": "pass",
+      "detail": "workspace.maxInputMb is 100"
+    }
+  ]
+}

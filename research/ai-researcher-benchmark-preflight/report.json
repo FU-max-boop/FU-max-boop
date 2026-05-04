@@ -1,0 +1,93 @@
+{
+  "generated_at": "2026-05-04T14:46:05.569471+00:00",
+  "ready": false,
+  "env_file": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/AI-Researcher/.env.template",
+  "benchmark_records_scanned": 1,
+  "summary": {
+    "passed": 12,
+    "warnings": 1,
+    "blockers": 3
+  },
+  "checks": [
+    {
+      "name": "env_file",
+      "status": "pass",
+      "detail": "Loaded 17 key(s) from .env.template"
+    },
+    {
+      "name": "env_file_name",
+      "status": "warn",
+      "detail": "Using non-default env file: .env.template"
+    },
+    {
+      "name": "required_env",
+      "status": "pass",
+      "detail": "All required runtime env keys are present"
+    },
+    {
+      "name": "openrouter_api_key",
+      "status": "fail",
+      "detail": "OPENROUTER_API_KEY is missing or a placeholder for openrouter/* model(s)"
+    },
+    {
+      "name": "openrouter_api_base",
+      "status": "pass",
+      "detail": "OPENROUTER_API_BASE URL format is valid"
+    },
+    {
+      "name": "port",
+      "status": "pass",
+      "detail": "PORT is valid: 7020"
+    },
+    {
+      "name": "max_iter_times",
+      "status": "pass",
+      "detail": "MAX_ITER_TIMES is valid: 0"
+    },
+    {
+      "name": "task_level",
+      "status": "pass",
+      "detail": "TASK_LEVEL is `task1`"
+    },
+    {
+      "name": "cache_path",
+      "status": "pass",
+      "detail": "CACHE_PATH can be created under writable directory: /Users/fu/Desktop/ai study/builds/hku-ai-papers/AI-Researcher"
+    },
+    {
+      "name": "workplace_name",
+      "status": "pass",
+      "detail": "WORKPLACE_NAME can be created under writable directory: /Users/fu/Desktop/ai study/builds/hku-ai-papers/AI-Researcher"
+    },
+    {
+      "name": "benchmark_category",
+      "status": "pass",
+      "detail": "Benchmark category exists: vq"
+    },
+    {
+      "name": "benchmark_schema",
+      "status": "pass",
+      "detail": "Benchmark instance schema looks valid: /Users/fu/Desktop/ai study/builds/hku-ai-papers/AI-Researcher/benchmark/final/vq/one_layer_vq.json"
+    },
+    {
+      "name": "source_papers",
+      "status": "pass",
+      "detail": "8 source paper(s) include reference and usage"
+    },
+    {
+      "name": "category_metaprompt",
+      "status": "pass",
+      "detail": "Dataset metaprompt exists for category `vq`"
+    },
+    {
+      "name": "python_dependencies",
+      "status": "fail",
+      "detail": "Missing package(s): litellm, loguru, browsergym, gradio, arxiv"
+    },
+    {
+      "name": "docker_command",
+      "status": "fail",
+      "detail": "Docker command is not available on PATH"
+    }
+  ]
+}
