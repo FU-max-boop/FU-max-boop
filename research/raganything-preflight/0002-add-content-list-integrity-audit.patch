@@ -1,0 +1,1602 @@
+From 16d5f1c25de595e012677bcd8b3329e084607f3f Mon Sep 17 00:00:00 2001
+From: FU-max-boop <ht3fudatou@163.com>
+Date: Mon, 4 May 2026 23:24:42 +0800
+Subject: [PATCH] Add content-list integrity audit
+
+---
+ README.md                                     |  19 +
+ .../content_list_audit_items.csv              |   8 +
+ .../content_list_audit_summary.json           | 195 +++++
+ .../content_list_audit_summary.md             |  42 +
+ examples/sample_content_list.json             |  56 ++
+ raganything/modalprocessors.py                |  24 +-
+ raganything/processor.py                      |  35 +-
+ raganything/utils.py                          |  57 +-
+ scripts/audit_content_list.py                 | 813 ++++++++++++++++++
+ tests/test_content_list_integrity.py          | 161 ++++
+ 10 files changed, 1387 insertions(+), 23 deletions(-)
+ create mode 100644 examples/content_list_audit/content_list_audit_items.csv
+ create mode 100644 examples/content_list_audit/content_list_audit_summary.json
+ create mode 100644 examples/content_list_audit/content_list_audit_summary.md
+ create mode 100644 examples/sample_content_list.json
+ create mode 100644 scripts/audit_content_list.py
+ create mode 100644 tests/test_content_list_integrity.py
+
+diff --git a/README.md b/README.md
+index 102bb6f..a7ec5ce 100644
+--- a/README.md
++++ b/README.md
+@@ -95,6 +95,23 @@ The preflight checks input paths, supported file types, parser/runtime
+ availability, LLM and embedding environment variables, numeric settings, and
+ working/output directory writability. Use `--strict` in CI to fail on blockers.
+ 
++### Optional Content List Audit
++
++Before using direct `content_list` insertion, you can audit a pre-parsed list
++without parser, LightRAG, LLM, embedding, or VLM calls:
++
++```bash
++python scripts/audit_content_list.py \
++  --input examples/sample_content_list.json \
++  --output-dir examples/content_list_audit \
++  --context-window 1
++```
++
++The audit checks schema fields, image path validity, caption availability,
++table/equation aliases, page indexes, and whether multimodal items have nearby
++text context. It writes JSON, Markdown, and CSV reports. Use `--strict` in CI
++to fail when blockers are found.
++
+ ---
+ 
+ ## 🌟 System Overview
+@@ -1001,6 +1018,8 @@ The `content_list` should follow the standard format with each item being a dict
+ - **`img_path`**: Must be an absolute path to the image file (e.g., `/home/user/images/chart.jpg` or `C:\Users\user\images\chart.jpg`)
+ - **`page_idx`**: Represents the page number where the content appears in the original document (0-based indexing)
+ - **Content ordering**: Items are processed in the order they appear in the list
++- **Aliases**: Tables accept `table_body` or `table_data`; equations preserve
++  `latex`, `text`, and `text_format` when building multimodal chunks
+ 
+ This method is particularly useful when:
+ - You have content from external parsers (non-MinerU/Docling)
+diff --git a/examples/content_list_audit/content_list_audit_items.csv b/examples/content_list_audit/content_list_audit_items.csv
+new file mode 100644
+index 0000000..3d9569f
+--- /dev/null
++++ b/examples/content_list_audit/content_list_audit_items.csv
+@@ -0,0 +1,8 @@
++index,content_type,page_idx,status,text_chars,caption_count,context_items,context_chars,image_path,table_rows,table_columns
++0,text,0,pass,169,0,0,0,,0,0
++1,image,1,fail,0,1,1,169,/absolute/path/to/system_architecture.jpg,0,0
++2,table,2,warn,283,1,0,0,,5,4
++3,equation,3,warn,136,0,1,196,,0,0
++4,text,4,pass,196,0,0,0,,0,0
++5,table,5,pass,272,1,2,367,,6,2
++6,text,6,pass,171,0,0,0,,0,0
+diff --git a/examples/content_list_audit/content_list_audit_summary.json b/examples/content_list_audit/content_list_audit_summary.json
+new file mode 100644
+index 0000000..1b1d2cb
+--- /dev/null
++++ b/examples/content_list_audit/content_list_audit_summary.json
+@@ -0,0 +1,195 @@
++{
++  "generated_at": "2026-05-04T15:23:55.566916+00:00",
++  "input_path": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/examples/sample_content_list.json",
++  "status": "blocked",
++  "context": {
++    "mode": "page",
++    "window": 1,
++    "types": [
++      "text"
++    ]
++  },
++  "summary": {
++    "total_items": 7,
++    "blockers": 2,
++    "warnings": 2,
++    "type_distribution": {
++      "text": 3,
++      "image": 1,
++      "table": 2,
++      "equation": 1
++    },
++    "multimodal_items": 4,
++    "multimodal_without_context": 1,
++    "text_chars": 1227
++  },
++  "findings": [
++    {
++      "severity": "fail",
++      "item_index": 1,
++      "content_type": "image",
++      "field": "img_path",
++      "message": "Image path looks like a placeholder.",
++      "recommendation": "Replace the placeholder with a real absolute image path."
++    },
++    {
++      "severity": "fail",
++      "item_index": 1,
++      "content_type": "image",
++      "field": "img_path",
++      "message": "Image path does not exist locally.",
++      "recommendation": "Create the file, fix the path, or remove the image item."
++    },
++    {
++      "severity": "warn",
++      "item_index": 2,
++      "content_type": "table",
++      "field": "context",
++      "message": "No page-window context was found for this multimodal item.",
++      "recommendation": "Add nearby text/captions or increase the context window before insertion."
++    },
++    {
++      "severity": "warn",
++      "item_index": 3,
++      "content_type": "equation",
++      "field": "text_format",
++      "message": "Equation has latex but no text_format.",
++      "recommendation": "Set text_format to LaTeX so downstream prompts can preserve notation."
++    }
++  ],
++  "items": [
++    {
++      "index": 0,
++      "content_type": "text",
++      "page_idx": 0,
++      "status": "pass",
++      "text_chars": 169,
++      "caption_count": 0,
++      "context_chars": 0,
++      "context_items": 0,
++      "image_path": "",
++      "table_rows": 0,
++      "table_columns": 0,
++      "findings": []
++    },
++    {
++      "index": 1,
++      "content_type": "image",
++      "page_idx": 1,
++      "status": "fail",
++      "text_chars": 0,
++      "caption_count": 1,
++      "context_chars": 169,
++      "context_items": 1,
++      "image_path": "/absolute/path/to/system_architecture.jpg",
++      "table_rows": 0,
++      "table_columns": 0,
++      "findings": [
++        {
++          "severity": "fail",
++          "item_index": 1,
++          "content_type": "image",
++          "field": "img_path",
++          "message": "Image path looks like a placeholder.",
++          "recommendation": "Replace the placeholder with a real absolute image path."
++        },
++        {
++          "severity": "fail",
++          "item_index": 1,
++          "content_type": "image",
++          "field": "img_path",
++          "message": "Image path does not exist locally.",
++          "recommendation": "Create the file, fix the path, or remove the image item."
++        }
++      ]
++    },
++    {
++      "index": 2,
++      "content_type": "table",
++      "page_idx": 2,
++      "status": "warn",
++      "text_chars": 283,
++      "caption_count": 1,
++      "context_chars": 0,
++      "context_items": 0,
++      "image_path": "",
++      "table_rows": 5,
++      "table_columns": 4,
++      "findings": [
++        {
++          "severity": "warn",
++          "item_index": 2,
++          "content_type": "table",
++          "field": "context",
++          "message": "No page-window context was found for this multimodal item.",
++          "recommendation": "Add nearby text/captions or increase the context window before insertion."
++        }
++      ]
++    },
++    {
++      "index": 3,
++      "content_type": "equation",
++      "page_idx": 3,
++      "status": "warn",
++      "text_chars": 136,
++      "caption_count": 0,
++      "context_chars": 196,
++      "context_items": 1,
++      "image_path": "",
++      "table_rows": 0,
++      "table_columns": 0,
++      "findings": [
++        {
++          "severity": "warn",
++          "item_index": 3,
++          "content_type": "equation",
++          "field": "text_format",
++          "message": "Equation has latex but no text_format.",
++          "recommendation": "Set text_format to LaTeX so downstream prompts can preserve notation."
++        }
++      ]
++    },
++    {
++      "index": 4,
++      "content_type": "text",
++      "page_idx": 4,
++      "status": "pass",
++      "text_chars": 196,
++      "caption_count": 0,
++      "context_chars": 0,
++      "context_items": 0,
++      "image_path": "",
++      "table_rows": 0,
++      "table_columns": 0,
++      "findings": []
++    },
++    {
++      "index": 5,
++      "content_type": "table",
++      "page_idx": 5,
++      "status": "pass",
++      "text_chars": 272,
++      "caption_count": 1,
++      "context_chars": 367,
++      "context_items": 2,
++      "image_path": "",
++      "table_rows": 6,
++      "table_columns": 2,
++      "findings": []
++    },
++    {
++      "index": 6,
++      "content_type": "text",
++      "page_idx": 6,
++      "status": "pass",
++      "text_chars": 171,
++      "caption_count": 0,
++      "context_chars": 0,
++      "context_items": 0,
++      "image_path": "",
++      "table_rows": 0,
++      "table_columns": 0,
++      "findings": []
++    }
++  ]
++}
+diff --git a/examples/content_list_audit/content_list_audit_summary.md b/examples/content_list_audit/content_list_audit_summary.md
+new file mode 100644
+index 0000000..ce85e86
+--- /dev/null
++++ b/examples/content_list_audit/content_list_audit_summary.md
+@@ -0,0 +1,42 @@
++# RAG-Anything Content List Audit
++
++- Generated at: `2026-05-04T15:23:55.566916+00:00`
++- Input: `/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/examples/sample_content_list.json`
++- Status: `blocked`
++- Context mode: `page`
++- Context window: `1`
++- Context types: `text`
++- Total items: 7
++- Blockers: 2
++- Warnings: 2
++- Multimodal items without context: 1
++
++## Type Distribution
++
++| Type | Count |
++| --- | ---: |
++| `equation` | 1 |
++| `image` | 1 |
++| `table` | 2 |
++| `text` | 3 |
++
++## Findings
++
++| Severity | Item | Type | Field | Finding | Recommendation |
++| --- | ---: | --- | --- | --- | --- |
++| `fail` | 1 | `image` | `img_path` | Image path looks like a placeholder. | Replace the placeholder with a real absolute image path. |
++| `fail` | 1 | `image` | `img_path` | Image path does not exist locally. | Create the file, fix the path, or remove the image item. |
++| `warn` | 2 | `table` | `context` | No page-window context was found for this multimodal item. | Add nearby text/captions or increase the context window before insertion. |
++| `warn` | 3 | `equation` | `text_format` | Equation has latex but no text_format. | Set text_format to LaTeX so downstream prompts can preserve notation. |
++
++## Item Audit
++
++| Index | Type | Page | Status | Text Chars | Captions | Context Items | Context Chars |
++| ---: | --- | ---: | --- | ---: | ---: | ---: | ---: |
++| 0 | `text` | 0 | `pass` | 169 | 0 | 0 | 0 |
++| 1 | `image` | 1 | `fail` | 0 | 1 | 1 | 169 |
++| 2 | `table` | 2 | `warn` | 283 | 1 | 0 | 0 |
++| 3 | `equation` | 3 | `warn` | 136 | 0 | 1 | 196 |
++| 4 | `text` | 4 | `pass` | 196 | 0 | 0 | 0 |
++| 5 | `table` | 5 | `pass` | 272 | 1 | 2 | 367 |
++| 6 | `text` | 6 | `pass` | 171 | 0 | 0 | 0 |
+diff --git a/examples/sample_content_list.json b/examples/sample_content_list.json
+new file mode 100644
+index 0000000..0782d48
+--- /dev/null
++++ b/examples/sample_content_list.json
+@@ -0,0 +1,56 @@
++[
++  {
++    "type": "text",
++    "text": "Welcome to the RAGAnything System Documentation. This guide covers the advanced multimodal document processing capabilities and features of our comprehensive RAG system.",
++    "page_idx": 0
++  },
++  {
++    "type": "image",
++    "img_path": "/absolute/path/to/system_architecture.jpg",
++    "image_caption": [
++      "Figure 1: RAGAnything System Architecture"
++    ],
++    "image_footnote": [
++      "The architecture shows the complete pipeline from document parsing to multimodal query processing"
++    ],
++    "page_idx": 1
++  },
++  {
++    "type": "table",
++    "table_body": "| System | Accuracy | Processing Speed | Memory Usage |\n|--------|----------|------------------|--------------|\n| RAGAnything | 95.2% | 120ms | 2.1GB |\n| Traditional RAG | 87.3% | 180ms | 3.2GB |\n| Baseline System | 82.1% | 220ms | 4.1GB |\n| Simple Retrieval | 76.5% | 95ms | 1.8GB |",
++    "table_caption": [
++      "Table 1: Performance Comparison of Different RAG Systems"
++    ],
++    "table_footnote": [
++      "All tests conducted on the same hardware with identical test datasets"
++    ],
++    "page_idx": 2
++  },
++  {
++    "type": "equation",
++    "latex": "Relevance(d, q) = \\sum_{i=1}^{n} w_i \\cdot sim(t_i^d, t_i^q) \\cdot \\alpha_i",
++    "text": "Document relevance scoring formula where w_i are term weights, sim() is similarity function, and alpha_i are modality importance factors",
++    "page_idx": 3
++  },
++  {
++    "type": "text",
++    "text": "The system supports multiple content modalities including text, images, tables, and mathematical equations. Each modality is processed using specialized processors optimized for that content type.",
++    "page_idx": 4
++  },
++  {
++    "type": "table",
++    "table_body": "| Feature | Specification |\n|---------|---------------|\n| Supported Formats | PDF, DOCX, PPTX, XLSX, Images |\n| Max Document Size | 100MB |\n| Concurrent Processing | Up to 8 documents |\n| Query Response Time | <200ms average |\n| Knowledge Graph Nodes | Up to 1M entities |",
++    "table_caption": [
++      "Table 2: Technical Specifications"
++    ],
++    "table_footnote": [
++      "Specifications may vary based on hardware configuration"
++    ],
++    "page_idx": 5
++  },
++  {
++    "type": "text",
++    "text": "RAGAnything represents a significant advancement in multimodal document processing, providing comprehensive solutions for complex knowledge extraction and retrieval tasks.",
++    "page_idx": 6
++  }
++]
+diff --git a/raganything/modalprocessors.py b/raganything/modalprocessors.py
+index 6e92f72..701143b 100644
+--- a/raganything/modalprocessors.py
++++ b/raganything/modalprocessors.py
+@@ -28,6 +28,12 @@ from lightrag.operate import extract_entities, merge_nodes_and_edges
+ 
+ # Import prompt templates
+ from raganything.prompt import PROMPTS
++from raganything.utils import (
++    format_table_body,
++    get_equation_text_and_format,
++    get_table_body,
++    normalize_caption_list,
++)
+ 
+ 
+ @dataclass
+@@ -1094,9 +1100,9 @@ class TableModalProcessor(BaseModalProcessor):
+                 content_data = modal_content
+ 
+             table_img_path = content_data.get("img_path")
+-            table_caption = content_data.get("table_caption", [])
+-            table_body = content_data.get("table_body", "")
+-            table_footnote = content_data.get("table_footnote", [])
++            table_caption = normalize_caption_list(content_data.get("table_caption"))
++            table_body = format_table_body(get_table_body(content_data))
++            table_footnote = normalize_caption_list(content_data.get("table_footnote"))
+ 
+             # Extract context for current item
+             context = ""
+@@ -1181,9 +1187,9 @@ class TableModalProcessor(BaseModalProcessor):
+                 content_data = modal_content
+ 
+             table_img_path = content_data.get("img_path")
+-            table_caption = content_data.get("table_caption", [])
+-            table_body = content_data.get("table_body", "")
+-            table_footnote = content_data.get("table_footnote", [])
++            table_caption = normalize_caption_list(content_data.get("table_caption"))
++            table_body = format_table_body(get_table_body(content_data))
++            table_footnote = normalize_caption_list(content_data.get("table_footnote"))
+ 
+             # Build complete table content
+             modal_chunk = PROMPTS["table_chunk"].format(
+@@ -1288,8 +1294,7 @@ class EquationModalProcessor(BaseModalProcessor):
+             else:
+                 content_data = modal_content
+ 
+-            equation_text = content_data.get("text")
+-            equation_format = content_data.get("text_format", "")
++            equation_text, equation_format = get_equation_text_and_format(content_data)
+ 
+             # Extract context for current item
+             context = ""
+@@ -1369,8 +1374,7 @@ class EquationModalProcessor(BaseModalProcessor):
+             else:
+                 content_data = modal_content
+ 
+-            equation_text = content_data.get("text")
+-            equation_format = content_data.get("text_format", "")
++            equation_text, equation_format = get_equation_text_and_format(content_data)
+ 
+             # Build complete equation content
+             modal_chunk = PROMPTS["equation_chunk"].format(
+diff --git a/raganything/processor.py b/raganything/processor.py
+index eaea0ef..f31c1d6 100644
+--- a/raganything/processor.py
++++ b/raganything/processor.py
+@@ -18,6 +18,10 @@ from raganything.utils import (
+     insert_text_content,
+     insert_text_content_with_multimodal_content,
+     get_processor_for_type,
++    format_table_body,
++    get_equation_text_and_format,
++    get_table_body,
++    normalize_caption_list,
+ )
+ import asyncio
+ from lightrag.utils import compute_mdhash_id
+@@ -654,7 +658,7 @@ class ProcessorMixin:
+                     # Prepare item info for context extraction
+                     item_info = {
+                         "page_idx": item.get("page_idx", 0),
+-                        "index": i,
++                        "index": item.get("_content_list_index", i),
+                         "type": content_type,
+                     }
+ 
+@@ -832,7 +836,7 @@ class ProcessorMixin:
+ 
+                     item_info = {
+                         "page_idx": item.get("page_idx", 0),
+-                        "index": index,
++                        "index": item.get("_content_list_index", index),
+                         "type": content_type,
+                     }
+ 
+@@ -1017,11 +1021,15 @@ class ProcessorMixin:
+         try:
+             if content_type == "image":
+                 image_path = original_item.get("img_path", "")
+-                captions = original_item.get(
+-                    "image_caption", original_item.get("img_caption", [])
++                captions = normalize_caption_list(
++                    original_item.get(
++                        "image_caption", original_item.get("img_caption", [])
++                    )
+                 )
+-                footnotes = original_item.get(
+-                    "image_footnote", original_item.get("img_footnote", [])
++                footnotes = normalize_caption_list(
++                    original_item.get(
++                        "image_footnote", original_item.get("img_footnote", [])
++                    )
+                 )
+ 
+                 return PROMPTS["image_chunk"].format(
+@@ -1033,9 +1041,13 @@ class ProcessorMixin:
+ 
+             elif content_type == "table":
+                 table_img_path = original_item.get("img_path", "")
+-                table_caption = original_item.get("table_caption", [])
+-                table_body = original_item.get("table_body", "")
+-                table_footnote = original_item.get("table_footnote", [])
++                table_caption = normalize_caption_list(
++                    original_item.get("table_caption", [])
++                )
++                table_body = format_table_body(get_table_body(original_item))
++                table_footnote = normalize_caption_list(
++                    original_item.get("table_footnote", [])
++                )
+ 
+                 return PROMPTS["table_chunk"].format(
+                     table_img_path=table_img_path,
+@@ -1048,8 +1060,9 @@ class ProcessorMixin:
+                 )
+ 
+             elif content_type == "equation":
+-                equation_text = original_item.get("text", "")
+-                equation_format = original_item.get("text_format", "")
++                equation_text, equation_format = get_equation_text_and_format(
++                    original_item
++                )
+ 
+                 return PROMPTS["equation_chunk"].format(
+                     equation_text=equation_text,
+diff --git a/raganything/utils.py b/raganything/utils.py
+index ab8d6ab..4ac9609 100644
+--- a/raganything/utils.py
++++ b/raganything/utils.py
+@@ -10,6 +10,57 @@ from pathlib import Path
+ from lightrag.utils import logger
+ 
+ 
++def normalize_caption_list(value: Any) -> List[str]:
++    """Return captions/footnotes as a clean list of strings."""
++    if value is None:
++        return []
++    if isinstance(value, list):
++        return [str(item).strip() for item in value if str(item).strip()]
++    if isinstance(value, str) and value.strip():
++        return [value.strip()]
++    return []
++
++
++def get_table_body(item: Dict[str, Any]) -> Any:
++    """Read table content across direct content-list alias fields."""
++    if item.get("table_body") not in (None, ""):
++        return item.get("table_body")
++    if item.get("table_data") not in (None, ""):
++        return item.get("table_data")
++    return item.get("text", "")
++
++
++def format_table_body(table_body: Any) -> str:
++    """Serialize table content for prompts and chunks without losing structure."""
++    if isinstance(table_body, str):
++        return table_body
++    return str(table_body)
++
++
++def get_equation_text_and_format(item: Dict[str, Any]) -> Tuple[str, str]:
++    """Read equation content while preserving LaTeX aliases from content lists."""
++    text = str(item.get("text", "") or "").strip()
++    latex = str(item.get("latex", "") or "").strip()
++    equation = str(item.get("equation", "") or "").strip()
++    equation_format = str(item.get("text_format", "") or "").strip()
++
++    parts = []
++    if latex:
++        parts.append(latex)
++        if not equation_format:
++            equation_format = "LaTeX"
++    elif equation:
++        parts.append(equation)
++
++    if text and text not in parts:
++        if parts:
++            parts.append(f"Description: {text}")
++        else:
++            parts.append(text)
++
++    return "\n".join(parts), equation_format
++
++
+ def separate_content(
+     content_list: List[Dict[str, Any]],
+ ) -> Tuple[str, List[Dict[str, Any]]]:
+@@ -25,7 +76,7 @@ def separate_content(
+     text_parts = []
+     multimodal_items = []
+ 
+-    for item in content_list:
++    for index, item in enumerate(content_list):
+         content_type = item.get("type", "text")
+ 
+         if content_type == "text":
+@@ -35,7 +86,9 @@ def separate_content(
+                 text_parts.append(text)
+         else:
+             # Multimodal content (image, table, equation, etc.)
+-            multimodal_items.append(item)
++            multimodal_item = dict(item)
++            multimodal_item.setdefault("_content_list_index", index)
++            multimodal_items.append(multimodal_item)
+ 
+     # Merge all text content
+     text_content = "\n\n".join(text_parts)
+diff --git a/scripts/audit_content_list.py b/scripts/audit_content_list.py
+new file mode 100644
+index 0000000..9dd7f57
+--- /dev/null
++++ b/scripts/audit_content_list.py
+@@ -0,0 +1,813 @@
++#!/usr/bin/env python3
++"""
++Audit pre-parsed RAG-Anything content_list files before insertion.
++
++The audit is intentionally offline: it does not call parsers, LightRAG, LLMs,
++embedding models, or VLMs. It catches schema, image-path, caption, page index,
++and context-availability issues that otherwise tend to surface late during
++direct content-list insertion.
++"""
++
++from __future__ import annotations
++
++import argparse
++import csv
++import json
++import sys
++from dataclasses import dataclass, field
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++
++
++IMAGE_EXTENSIONS = {
++    ".jpg",
++    ".jpeg",
++    ".png",
++    ".gif",
++    ".bmp",
++    ".webp",
++    ".tiff",
++    ".tif",
++}
++MULTIMODAL_TYPES = {"image", "table", "equation"}
++PLACEHOLDER_MARKERS = {
++    "/absolute/path",
++    "your/",
++    "your-",
++    "path/to/",
++    "example.",
++    "placeholder",
++}
++
++
++@dataclass
++class Finding:
++    severity: str
++    item_index: int | None
++    content_type: str
++    field: str
++    message: str
++    recommendation: str
++
++    def as_dict(self) -> dict[str, Any]:
++        return {
++            "severity": self.severity,
++            "item_index": self.item_index,
++            "content_type": self.content_type,
++            "field": self.field,
++            "message": self.message,
++            "recommendation": self.recommendation,
++        }
++
++
++@dataclass
++class ItemAudit:
++    index: int
++    content_type: str
++    page_idx: int | None
++    text_chars: int = 0
++    caption_count: int = 0
++    context_chars: int = 0
++    context_items: int = 0
++    image_path: str = ""
++    table_rows: int = 0
++    table_columns: int = 0
++    findings: list[Finding] = field(default_factory=list)
++
++    @property
++    def status(self) -> str:
++        severities = {finding.severity for finding in self.findings}
++        if "fail" in severities:
++            return "fail"
++        if "warn" in severities:
++            return "warn"
++        return "pass"
++
++    def as_dict(self) -> dict[str, Any]:
++        return {
++            "index": self.index,
++            "content_type": self.content_type,
++            "page_idx": self.page_idx,
++            "status": self.status,
++            "text_chars": self.text_chars,
++            "caption_count": self.caption_count,
++            "context_chars": self.context_chars,
++            "context_items": self.context_items,
++            "image_path": self.image_path,
++            "table_rows": self.table_rows,
++            "table_columns": self.table_columns,
++            "findings": [finding.as_dict() for finding in self.findings],
++        }
++
++
++@dataclass
++class ContentListAudit:
++    input_path: str
++    generated_at: str
++    context_mode: str
++    context_window: int
++    context_types: list[str]
++    items: list[ItemAudit]
++    findings: list[Finding]
++
++    @property
++    def blockers(self) -> list[Finding]:
++        return [finding for finding in self.findings if finding.severity == "fail"]
++
++    @property
++    def warnings(self) -> list[Finding]:
++        return [finding for finding in self.findings if finding.severity == "warn"]
++
++    @property
++    def status(self) -> str:
++        if self.blockers:
++            return "blocked"
++        if self.warnings:
++            return "ready_with_warnings"
++        return "ready"
++
++    def type_distribution(self) -> dict[str, int]:
++        distribution: dict[str, int] = {}
++        for item in self.items:
++            distribution[item.content_type] = distribution.get(item.content_type, 0) + 1
++        return distribution
++
++    def as_dict(self) -> dict[str, Any]:
++        return {
++            "generated_at": self.generated_at,
++            "input_path": self.input_path,
++            "status": self.status,
++            "context": {
++                "mode": self.context_mode,
++                "window": self.context_window,
++                "types": self.context_types,
++            },
++            "summary": {
++                "total_items": len(self.items),
++                "blockers": len(self.blockers),
++                "warnings": len(self.warnings),
++                "type_distribution": self.type_distribution(),
++                "multimodal_items": len(
++                    [item for item in self.items if item.content_type != "text"]
++                ),
++                "multimodal_without_context": len(
++                    [
++                        item
++                        for item in self.items
++                        if item.content_type != "text" and item.context_items == 0
++                    ]
++                ),
++                "text_chars": sum(item.text_chars for item in self.items),
++            },
++            "findings": [finding.as_dict() for finding in self.findings],
++            "items": [item.as_dict() for item in self.items],
++        }
++
++    def to_text(self) -> str:
++        summary = self.as_dict()["summary"]
++        lines = [
++            f"RAG-Anything content_list audit: {self.status.upper()}",
++            f"Input: {self.input_path}",
++            f"Items: {summary['total_items']}",
++            f"Blockers: {summary['blockers']}",
++            f"Warnings: {summary['warnings']}",
++            f"Type distribution: {summary['type_distribution']}",
++            f"Multimodal items without context: {summary['multimodal_without_context']}",
++            "",
++        ]
++        for finding in self.findings:
++            location = (
++                f"item {finding.item_index}"
++                if finding.item_index is not None
++                else "global"
++            )
++            lines.append(
++                f"[{finding.severity.upper()}] {location} "
++                f"{finding.content_type}.{finding.field}: {finding.message}"
++            )
++            lines.append(f"  -> {finding.recommendation}")
++        return "\n".join(lines)
++
++    def to_markdown(self) -> str:
++        summary = self.as_dict()["summary"]
++        lines = [
++            "# RAG-Anything Content List Audit",
++            "",
++            f"- Generated at: `{self.generated_at}`",
++            f"- Input: `{self.input_path}`",
++            f"- Status: `{self.status}`",
++            f"- Context mode: `{self.context_mode}`",
++            f"- Context window: `{self.context_window}`",
++            f"- Context types: `{', '.join(self.context_types)}`",
++            f"- Total items: {summary['total_items']}",
++            f"- Blockers: {summary['blockers']}",
++            f"- Warnings: {summary['warnings']}",
++            f"- Multimodal items without context: {summary['multimodal_without_context']}",
++            "",
++            "## Type Distribution",
++            "",
++            "| Type | Count |",
++            "| --- | ---: |",
++        ]
++        for content_type, count in sorted(summary["type_distribution"].items()):
++            lines.append(f"| `{content_type}` | {count} |")
++
++        lines.extend(
++            [
++                "",
++                "## Findings",
++                "",
++                "| Severity | Item | Type | Field | Finding | Recommendation |",
++                "| --- | ---: | --- | --- | --- | --- |",
++            ]
++        )
++        if self.findings:
++            for finding in self.findings:
++                item_index = "" if finding.item_index is None else str(finding.item_index)
++                message = finding.message.replace("|", "\\|")
++                recommendation = finding.recommendation.replace("|", "\\|")
++                lines.append(
++                    f"| `{finding.severity}` | {item_index} | "
++                    f"`{finding.content_type}` | `{finding.field}` | "
++                    f"{message} | {recommendation} |"
++                )
++        else:
++            lines.append("| `pass` |  | `all` | `all` | No findings | No action needed |")
++
++        lines.extend(
++            [
++                "",
++                "## Item Audit",
++                "",
++                "| Index | Type | Page | Status | Text Chars | Captions | Context Items | Context Chars |",
++                "| ---: | --- | ---: | --- | ---: | ---: | ---: | ---: |",
++            ]
++        )
++        for item in self.items:
++            page = "" if item.page_idx is None else str(item.page_idx)
++            lines.append(
++                f"| {item.index} | `{item.content_type}` | {page} | `{item.status}` | "
++                f"{item.text_chars} | {item.caption_count} | "
++                f"{item.context_items} | {item.context_chars} |"
++            )
++        lines.append("")
++        return "\n".join(lines)
++
++
++def add_finding(
++    findings: list[Finding],
++    severity: str,
++    item_index: int | None,
++    content_type: str,
++    field: str,
++    message: str,
++    recommendation: str,
++) -> None:
++    findings.append(
++        Finding(
++            severity=severity,
++            item_index=item_index,
++            content_type=content_type,
++            field=field,
++            message=message,
++            recommendation=recommendation,
++        )
++    )
++
++
++def load_content_list(input_path: Path) -> list[dict[str, Any]]:
++    try:
++        payload = json.loads(input_path.read_text(encoding="utf-8"))
++    except json.JSONDecodeError as exc:
++        raise ValueError(f"Invalid JSON: {exc}") from exc
++
++    if isinstance(payload, list):
++        return payload
++    if isinstance(payload, dict) and isinstance(payload.get("content_list"), list):
++        return payload["content_list"]
++    raise ValueError("Expected a JSON list or an object with a content_list list")
++
++
++def normalize_list(value: Any) -> list[str]:
++    if value is None:
++        return []
++    if isinstance(value, list):
++        return [str(item).strip() for item in value if str(item).strip()]
++    if isinstance(value, str) and value.strip():
++        return [value.strip()]
++    return []
++
++
++def joined_caption_count(item: dict[str, Any], content_type: str) -> int:
++    if content_type == "image":
++        captions = normalize_list(item.get("image_caption")) + normalize_list(
++            item.get("img_caption")
++        )
++        return len(captions)
++    if content_type == "table":
++        return len(normalize_list(item.get("table_caption")))
++    if content_type == "equation":
++        captions = normalize_list(item.get("equation_caption"))
++        return len(captions)
++    return 0
++
++
++def text_for_context(item: dict[str, Any], context_types: set[str]) -> str:
++    content_type = str(item.get("type", "text"))
++    if content_type not in context_types:
++        return ""
++    if content_type == "text":
++        return str(item.get("text", "")).strip()
++    if content_type == "image":
++        captions = normalize_list(item.get("image_caption")) + normalize_list(
++            item.get("img_caption")
++        )
++        return " ".join(captions)
++    if content_type == "table":
++        return " ".join(normalize_list(item.get("table_caption")))
++    if content_type == "equation":
++        return str(item.get("text", "") or item.get("latex", "")).strip()
++    return str(item.get("content", "")).strip()
++
++
++def table_shape(table_body: Any) -> tuple[int, int]:
++    if isinstance(table_body, list):
++        rows = len(table_body)
++        columns = max((len(row) for row in table_body if isinstance(row, list)), default=0)
++        return rows, columns
++
++    lines = [line.strip() for line in str(table_body).splitlines() if line.strip()]
++    data_lines = [line for line in lines if not set(line.replace("|", "").strip()) <= {"-", ":"}]
++    rows = len(data_lines)
++    columns = 0
++    for line in data_lines:
++        if "|" in line:
++            cells = [cell for cell in line.strip("|").split("|")]
++            columns = max(columns, len(cells))
++    return rows, columns
++
++
++def is_placeholder_path(path_text: str) -> bool:
++    normalized = path_text.lower().replace("\\", "/")
++    return any(marker in normalized for marker in PLACEHOLDER_MARKERS)
++
++
++def audit_schema_item(
++    item: Any,
++    index: int,
++    max_image_size_mb: int,
++) -> ItemAudit:
++    findings: list[Finding] = []
++
++    if not isinstance(item, dict):
++        add_finding(
++            findings,
++            "fail",
++            index,
++            "unknown",
++            "item",
++            "Content item is not a JSON object.",
++            "Use a dictionary for each content_list entry.",
++        )
++        return ItemAudit(index=index, content_type="unknown", page_idx=None, findings=findings)
++
++    content_type = str(item.get("type", "text") or "text")
++    page_idx_value = item.get("page_idx")
++    page_idx = page_idx_value if isinstance(page_idx_value, int) and not isinstance(page_idx_value, bool) else None
++
++    if not isinstance(item.get("type", "text"), str):
++        add_finding(
++            findings,
++            "fail",
++            index,
++            content_type,
++            "type",
++            "The type field must be a string.",
++            "Set type to text, image, table, equation, or a custom string.",
++        )
++
++    if page_idx is None:
++        add_finding(
++            findings,
++            "fail",
++            index,
++            content_type,
++            "page_idx",
++            "Missing or non-integer page_idx.",
++            "Set a 0-based integer page_idx so page context extraction is reliable.",
++        )
++    elif page_idx < 0:
++        add_finding(
++            findings,
++            "fail",
++            index,
++            content_type,
++            "page_idx",
++            "page_idx is negative.",
++            "Use 0-based non-negative page indexes.",
++        )
++
++    text_chars = 0
++    caption_count = joined_caption_count(item, content_type)
++    image_path = ""
++    table_rows = 0
++    table_columns = 0
++
++    if content_type == "text":
++        text = str(item.get("text", "")).strip()
++        text_chars = len(text)
++        if not text:
++            add_finding(
++                findings,
++                "fail",
++                index,
++                content_type,
++                "text",
++                "Text item has empty text.",
++                "Add non-empty text or remove the item before insertion.",
++            )
++
++    elif content_type == "image":
++        image_path = str(item.get("img_path", "")).strip()
++        if not image_path:
++            add_finding(
++                findings,
++                "fail",
++                index,
++                content_type,
++                "img_path",
++                "Image item has no img_path.",
++                "Provide an absolute path to an existing local image file.",
++            )
++        else:
++            path = Path(image_path).expanduser()
++            if is_placeholder_path(image_path):
++                add_finding(
++                    findings,
++                    "fail",
++                    index,
++                    content_type,
++                    "img_path",
++                    "Image path looks like a placeholder.",
++                    "Replace the placeholder with a real absolute image path.",
++                )
++            if not path.is_absolute():
++                add_finding(
++                    findings,
++                    "fail",
++                    index,
++                    content_type,
++                    "img_path",
++                    "Image path is not absolute.",
++                    "Use an absolute path because direct insertion validates local image files.",
++                )
++            if path.suffix.lower() not in IMAGE_EXTENSIONS:
++                add_finding(
++                    findings,
++                    "fail",
++                    index,
++                    content_type,
++                    "img_path",
++                    "Image extension is not in the supported image extension set.",
++                    "Use jpg, jpeg, png, gif, bmp, webp, tiff, or tif.",
++                )
++            if path.exists():
++                if path.is_symlink():
++                    add_finding(
++                        findings,
++                        "fail",
++                        index,
++                        content_type,
++                        "img_path",
++                        "Image path is a symlink.",
++                        "Use a direct file path; image validation blocks symlinks.",
++                    )
++                elif path.stat().st_size > max_image_size_mb * 1024 * 1024:
++                    add_finding(
++                        findings,
++                        "fail",
++                        index,
++                        content_type,
++                        "img_path",
++                        f"Image file is larger than {max_image_size_mb} MB.",
++                        "Compress the image or increase the limit intentionally.",
++                    )
++            else:
++                add_finding(
++                    findings,
++                    "fail",
++                    index,
++                    content_type,
++                    "img_path",
++                    "Image path does not exist locally.",
++                    "Create the file, fix the path, or remove the image item.",
++                )
++        if caption_count == 0:
++            add_finding(
++                findings,
++                "warn",
++                index,
++                content_type,
++                "image_caption",
++                "Image item has no caption.",
++                "Add image_caption or img_caption to improve multimodal context and citations.",
++            )
++
++    elif content_type == "table":
++        table_body = item.get("table_body", item.get("text", ""))
++        if not str(table_body).strip():
++            add_finding(
++                findings,
++                "fail",
++                index,
++                content_type,
++                "table_body",
++                "Table item has empty table_body.",
++                "Add a markdown/string table_body or remove the item.",
++            )
++        else:
++            table_rows, table_columns = table_shape(table_body)
++            text_chars = len(str(table_body))
++            if table_rows <= 1 or table_columns <= 1:
++                add_finding(
++                    findings,
++                    "warn",
++                    index,
++                    content_type,
++                    "table_body",
++                    "Table body does not look like a multi-row, multi-column table.",
++                    "Check whether the parser produced a usable table representation.",
++                )
++        if caption_count == 0:
++            add_finding(
++                findings,
++                "warn",
++                index,
++                content_type,
++                "table_caption",
++                "Table item has no caption.",
++                "Add table_caption so retrieval can preserve table meaning.",
++            )
++
++    elif content_type == "equation":
++        equation_text = str(item.get("text", "")).strip()
++        latex_text = str(item.get("latex", "")).strip()
++        text_chars = len(equation_text or latex_text)
++        if not equation_text and not latex_text:
++            add_finding(
++                findings,
++                "fail",
++                index,
++                content_type,
++                "text",
++                "Equation item has neither text nor latex.",
++                "Provide text and optionally latex/text_format for equation processing.",
++            )
++        if latex_text and not item.get("text_format"):
++            add_finding(
++                findings,
++                "warn",
++                index,
++                content_type,
++                "text_format",
++                "Equation has latex but no text_format.",
++                "Set text_format to LaTeX so downstream prompts can preserve notation.",
++            )
++        if latex_text and not equation_text:
++            add_finding(
++                findings,
++                "warn",
++                index,
++                content_type,
++                "text",
++                "Equation has latex but no text description.",
++                "Add text because current equation chunk generation reads the text field.",
++            )
++
++    else:
++        generic_text = str(item.get("content", item.get("text", ""))).strip()
++        text_chars = len(generic_text)
++        if not generic_text:
++            add_finding(
++                findings,
++                "warn",
++                index,
++                content_type,
++                "content",
++                "Custom content item has neither content nor text.",
++                "Add a serializable content or text field for generic processing.",
++            )
++
++    return ItemAudit(
++        index=index,
++        content_type=content_type,
++        page_idx=page_idx,
++        text_chars=text_chars,
++        caption_count=caption_count,
++        image_path=image_path,
++        table_rows=table_rows,
++        table_columns=table_columns,
++        findings=findings,
++    )
++
++
++def add_context_findings(
++    content_list: list[dict[str, Any]],
++    items: list[ItemAudit],
++    context_mode: str,
++    context_window: int,
++    context_types: set[str],
++) -> None:
++    for audited_item in items:
++        if audited_item.content_type == "text":
++            continue
++
++        source_item = content_list[audited_item.index]
++        if not isinstance(source_item, dict):
++            continue
++        context_texts: list[str] = []
++
++        if context_mode == "page":
++            if audited_item.page_idx is None:
++                continue
++            start_page = max(0, audited_item.page_idx - context_window)
++            end_page = audited_item.page_idx + context_window
++            for candidate_index, candidate in enumerate(content_list):
++                if candidate_index == audited_item.index:
++                    continue
++                if not isinstance(candidate, dict):
++                    continue
++                candidate_page = candidate.get("page_idx")
++                if not isinstance(candidate_page, int) or isinstance(candidate_page, bool):
++                    continue
++                if start_page <= candidate_page <= end_page:
++                    text = text_for_context(candidate, context_types)
++                    if text:
++                        context_texts.append(text)
++        else:
++            start_index = max(0, audited_item.index - context_window)
++            end_index = min(len(content_list) - 1, audited_item.index + context_window)
++            for candidate_index in range(start_index, end_index + 1):
++                if candidate_index == audited_item.index:
++                    continue
++                if not isinstance(content_list[candidate_index], dict):
++                    continue
++                text = text_for_context(content_list[candidate_index], context_types)
++                if text:
++                    context_texts.append(text)
++
++        audited_item.context_items = len(context_texts)
++        audited_item.context_chars = sum(len(text) for text in context_texts)
++
++        if not context_texts:
++            add_finding(
++                audited_item.findings,
++                "warn",
++                audited_item.index,
++                audited_item.content_type,
++                "context",
++                f"No {context_mode}-window context was found for this multimodal item.",
++                "Add nearby text/captions or increase the context window before insertion.",
++            )
++
++
++def build_audit(args: argparse.Namespace) -> ContentListAudit:
++    input_path = Path(args.input).expanduser().resolve()
++    content_list = load_content_list(input_path)
++
++    items = [
++        audit_schema_item(item, index, args.max_image_size_mb)
++        for index, item in enumerate(content_list)
++    ]
++    context_types = {item.strip() for item in args.context_types.split(",") if item.strip()}
++    add_context_findings(
++        content_list,
++        items,
++        args.context_mode,
++        args.context_window,
++        context_types,
++    )
++
++    findings = [finding for item in items for finding in item.findings]
++    if not content_list:
++        add_finding(
++            findings,
++            "fail",
++            None,
++            "global",
++            "content_list",
++            "The content list is empty.",
++            "Provide at least one text or multimodal content item.",
++        )
++
++    return ContentListAudit(
++        input_path=str(input_path),
++        generated_at=datetime.now(timezone.utc).isoformat(),
++        context_mode=args.context_mode,
++        context_window=args.context_window,
++        context_types=sorted(context_types),
++        items=items,
++        findings=findings,
++    )
++
++
++def write_outputs(audit: ContentListAudit, output_dir: Path) -> None:
++    output_dir.mkdir(parents=True, exist_ok=True)
++    (output_dir / "content_list_audit_summary.json").write_text(
++        json.dumps(audit.as_dict(), indent=2, ensure_ascii=False) + "\n",
++        encoding="utf-8",
++    )
++    (output_dir / "content_list_audit_summary.md").write_text(
++        audit.to_markdown(),
++        encoding="utf-8",
++    )
++
++    with (output_dir / "content_list_audit_items.csv").open(
++        "w", encoding="utf-8", newline=""
++    ) as file:
++        writer = csv.DictWriter(
++            file,
++            fieldnames=[
++                "index",
++                "content_type",
++                "page_idx",
++                "status",
++                "text_chars",
++                "caption_count",
++                "context_items",
++                "context_chars",
++                "image_path",
++                "table_rows",
++                "table_columns",
++            ],
++        )
++        writer.writeheader()
++        for item in audit.items:
++            row = item.as_dict()
++            row.pop("findings")
++            writer.writerow(row)
++
++
++def parse_args(argv: list[str]) -> argparse.Namespace:
++    parser = argparse.ArgumentParser(
++        description="Audit a RAG-Anything content_list JSON file before insertion."
++    )
++    parser.add_argument("--input", required=True, help="Path to content_list JSON.")
++    parser.add_argument(
++        "--output-dir",
++        default="content_list_audit",
++        help="Directory for markdown, JSON, and CSV audit outputs.",
++    )
++    parser.add_argument(
++        "--context-mode",
++        choices=["page", "chunk"],
++        default="page",
++        help="Context mode to simulate for multimodal items.",
++    )
++    parser.add_argument(
++        "--context-window",
++        type=int,
++        default=1,
++        help="Page or chunk window to use when checking context availability.",
++    )
++    parser.add_argument(
++        "--context-types",
++        default="text",
++        help="Comma-separated content types considered usable context.",
++    )
++    parser.add_argument(
++        "--max-image-size-mb",
++        type=int,
++        default=50,
++        help="Maximum accepted image size, matching runtime image validation.",
++    )
++    parser.add_argument(
++        "--strict",
++        action="store_true",
++        help="Exit non-zero when blockers are found.",
++    )
++    return parser.parse_args(argv)
++
++
++def main(argv: list[str] | None = None) -> int:
++    args = parse_args(argv or sys.argv[1:])
++    if args.context_window < 0:
++        print("context-window must be non-negative", file=sys.stderr)
++        return 2
++
++    try:
++        audit = build_audit(args)
++    except (OSError, ValueError) as exc:
++        print(f"Failed to audit content list: {exc}", file=sys.stderr)
++        return 2
++
++    write_outputs(audit, Path(args.output_dir).expanduser())
++    print(audit.to_text())
++    if args.strict and audit.blockers:
++        return 1
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/test_content_list_integrity.py b/tests/test_content_list_integrity.py
+new file mode 100644
+index 0000000..bb47fde
+--- /dev/null
++++ b/tests/test_content_list_integrity.py
+@@ -0,0 +1,161 @@
++import importlib.util
++import sys
++import types
++import unittest
++from pathlib import Path
++
++PROJECT_ROOT = Path(__file__).resolve().parents[1]
++
++
++class FakeLogger:
++    def info(self, *args, **kwargs):
++        pass
++
++    def warning(self, *args, **kwargs):
++        pass
++
++    def error(self, *args, **kwargs):
++        pass
++
++    def debug(self, *args, **kwargs):
++        pass
++
++
++def install_lightweight_import_stubs():
++    lightrag_module = types.ModuleType("lightrag")
++    lightrag_utils = types.ModuleType("lightrag.utils")
++    lightrag_utils.logger = FakeLogger()
++    lightrag_utils.compute_mdhash_id = lambda value, prefix="": f"{prefix}test"
++    sys.modules.setdefault("lightrag", lightrag_module)
++    sys.modules.setdefault("lightrag.utils", lightrag_utils)
++
++    raganything_pkg = types.ModuleType("raganything")
++    raganything_pkg.__path__ = [str(PROJECT_ROOT / "raganything")]
++    sys.modules.setdefault("raganything", raganything_pkg)
++
++    parser_stub = types.ModuleType("raganything.parser")
++    parser_stub.MineruParser = object
++    parser_stub.MineruExecutionError = RuntimeError
++    parser_stub.get_parser = lambda *args, **kwargs: None
++    sys.modules.setdefault("raganything.parser", parser_stub)
++
++
++def load_project_module(module_name, path):
++    spec = importlib.util.spec_from_file_location(module_name, path)
++    module = importlib.util.module_from_spec(spec)
++    sys.modules[module_name] = module
++    spec.loader.exec_module(module)
++    return module
++
++
++install_lightweight_import_stubs()
++utils_module = load_project_module(
++    "raganything.utils", PROJECT_ROOT / "raganything" / "utils.py"
++)
++processor_module = load_project_module(
++    "raganything.processor", PROJECT_ROOT / "raganything" / "processor.py"
++)
++
++ProcessorMixin = processor_module.ProcessorMixin
++get_equation_text_and_format = utils_module.get_equation_text_and_format
++get_table_body = utils_module.get_table_body
++normalize_caption_list = utils_module.normalize_caption_list
++separate_content = utils_module.separate_content
++
++
++def load_audit_module():
++    script_path = PROJECT_ROOT / "scripts" / "audit_content_list.py"
++    spec = importlib.util.spec_from_file_location("audit_content_list", script_path)
++    module = importlib.util.module_from_spec(spec)
++    sys.modules["audit_content_list"] = module
++    spec.loader.exec_module(module)
++    return module
++
++
++class ContentListIntegrityTests(unittest.TestCase):
++    def test_separate_content_preserves_original_content_list_index(self):
++        content = [
++            {"type": "text", "text": "Before"},
++            {"type": "image", "img_path": "/tmp/figure.png"},
++            {"type": "text", "text": "After"},
++            {"type": "table", "table_body": "| A | B |"},
++        ]
++
++        _, multimodal = separate_content(content)
++
++        self.assertEqual([item["_content_list_index"] for item in multimodal], [1, 3])
++
++    def test_table_alias_and_caption_normalization_feed_chunk_template(self):
++        processor = ProcessorMixin()
++        chunk = processor._apply_chunk_template(
++            "table",
++            {
++                "table_data": [["Method", "Score"], ["RAGAnything", "95.2"]],
++                "table_caption": "Performance table",
++                "table_footnote": "Synthetic example",
++            },
++            "The table compares scores.",
++        )
++
++        self.assertEqual(get_table_body({"table_data": [["A", "B"]]}), [["A", "B"]])
++        self.assertEqual(normalize_caption_list("Performance table"), ["Performance table"])
++        self.assertIn("['Method', 'Score']", chunk)
++        self.assertIn("Performance table", chunk)
++        self.assertIn("Synthetic example", chunk)
++
++    def test_equation_latex_alias_is_not_dropped_from_chunk_template(self):
++        processor = ProcessorMixin()
++        item = {
++            "latex": "E = mc^2",
++            "text": "Mass-energy equivalence",
++        }
++
++        equation_text, equation_format = get_equation_text_and_format(item)
++        chunk = processor._apply_chunk_template("equation", item, "A physics equation.")
++
++        self.assertEqual(equation_text, "E = mc^2\nDescription: Mass-energy equivalence")
++        self.assertEqual(equation_format, "LaTeX")
++        self.assertIn("E = mc^2", chunk)
++        self.assertIn("Mass-energy equivalence", chunk)
++        self.assertIn("Format: LaTeX", chunk)
++
++    def test_audit_content_list_flags_placeholder_image_and_context(self):
++        audit_module = load_audit_module()
++        content_list = [
++            {"type": "text", "text": "Intro", "page_idx": 0},
++            {
++                "type": "image",
++                "img_path": "/absolute/path/to/figure.jpg",
++                "image_caption": ["Architecture"],
++                "page_idx": 5,
++            },
++        ]
++        import tempfile
++
++        with tempfile.TemporaryDirectory() as temp_dir:
++            temp_path = Path(temp_dir)
++            input_path = temp_path / "content_list.json"
++            input_path.write_text(
++                audit_module.json.dumps(content_list), encoding="utf-8"
++            )
++
++            args = audit_module.parse_args(
++                [
++                    "--input",
++                    str(input_path),
++                    "--output-dir",
++                    str(temp_path / "audit"),
++                    "--context-window",
++                    "1",
++                ]
++            )
++            audit = audit_module.build_audit(args)
++
++        self.assertEqual(audit.status, "blocked")
++        messages = [finding.message for finding in audit.findings]
++        self.assertTrue(any("placeholder" in message for message in messages))
++        self.assertTrue(any("No page-window context" in message for message in messages))
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.39.5 (Apple Git-154)
+

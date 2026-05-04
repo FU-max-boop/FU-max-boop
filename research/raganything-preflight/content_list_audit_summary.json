@@ -1,0 +1,195 @@
+{
+  "generated_at": "2026-05-04T15:23:55.566916+00:00",
+  "input_path": "/Users/fu/Desktop/ai study/builds/hku-ai-papers/RAG-Anything/examples/sample_content_list.json",
+  "status": "blocked",
+  "context": {
+    "mode": "page",
+    "window": 1,
+    "types": [
+      "text"
+    ]
+  },
+  "summary": {
+    "total_items": 7,
+    "blockers": 2,
+    "warnings": 2,
+    "type_distribution": {
+      "text": 3,
+      "image": 1,
+      "table": 2,
+      "equation": 1
+    },
+    "multimodal_items": 4,
+    "multimodal_without_context": 1,
+    "text_chars": 1227
+  },
+  "findings": [
+    {
+      "severity": "fail",
+      "item_index": 1,
+      "content_type": "image",
+      "field": "img_path",
+      "message": "Image path looks like a placeholder.",
+      "recommendation": "Replace the placeholder with a real absolute image path."
+    },
+    {
+      "severity": "fail",
+      "item_index": 1,
+      "content_type": "image",
+      "field": "img_path",
+      "message": "Image path does not exist locally.",
+      "recommendation": "Create the file, fix the path, or remove the image item."
+    },
+    {
+      "severity": "warn",
+      "item_index": 2,
+      "content_type": "table",
+      "field": "context",
+      "message": "No page-window context was found for this multimodal item.",
+      "recommendation": "Add nearby text/captions or increase the context window before insertion."
+    },
+    {
+      "severity": "warn",
+      "item_index": 3,
+      "content_type": "equation",
+      "field": "text_format",
+      "message": "Equation has latex but no text_format.",
+      "recommendation": "Set text_format to LaTeX so downstream prompts can preserve notation."
+    }
+  ],
+  "items": [
+    {
+      "index": 0,
+      "content_type": "text",
+      "page_idx": 0,
+      "status": "pass",
+      "text_chars": 169,
+      "caption_count": 0,
+      "context_chars": 0,
+      "context_items": 0,
+      "image_path": "",
+      "table_rows": 0,
+      "table_columns": 0,
+      "findings": []
+    },
+    {
+      "index": 1,
+      "content_type": "image",
+      "page_idx": 1,
+      "status": "fail",
+      "text_chars": 0,
+      "caption_count": 1,
+      "context_chars": 169,
+      "context_items": 1,
+      "image_path": "/absolute/path/to/system_architecture.jpg",
+      "table_rows": 0,
+      "table_columns": 0,
+      "findings": [
+        {
+          "severity": "fail",
+          "item_index": 1,
+          "content_type": "image",
+          "field": "img_path",
+          "message": "Image path looks like a placeholder.",
+          "recommendation": "Replace the placeholder with a real absolute image path."
+        },
+        {
+          "severity": "fail",
+          "item_index": 1,
+          "content_type": "image",
+          "field": "img_path",
+          "message": "Image path does not exist locally.",
+          "recommendation": "Create the file, fix the path, or remove the image item."
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "content_type": "table",
+      "page_idx": 2,
+      "status": "warn",
+      "text_chars": 283,
+      "caption_count": 1,
+      "context_chars": 0,
+      "context_items": 0,
+      "image_path": "",
+      "table_rows": 5,
+      "table_columns": 4,
+      "findings": [
+        {
+          "severity": "warn",
+          "item_index": 2,
+          "content_type": "table",
+          "field": "context",
+          "message": "No page-window context was found for this multimodal item.",
+          "recommendation": "Add nearby text/captions or increase the context window before insertion."
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "content_type": "equation",
+      "page_idx": 3,
+      "status": "warn",
+      "text_chars": 136,
+      "caption_count": 0,
+      "context_chars": 196,
+      "context_items": 1,
+      "image_path": "",
+      "table_rows": 0,
+      "table_columns": 0,
+      "findings": [
+        {
+          "severity": "warn",
+          "item_index": 3,
+          "content_type": "equation",
+          "field": "text_format",
+          "message": "Equation has latex but no text_format.",
+          "recommendation": "Set text_format to LaTeX so downstream prompts can preserve notation."
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "content_type": "text",
+      "page_idx": 4,
+      "status": "pass",
+      "text_chars": 196,
+      "caption_count": 0,
+      "context_chars": 0,
+      "context_items": 0,
+      "image_path": "",
+      "table_rows": 0,
+      "table_columns": 0,
+      "findings": []
+    },
+    {
+      "index": 5,
+      "content_type": "table",
+      "page_idx": 5,
+      "status": "pass",
+      "text_chars": 272,
+      "caption_count": 1,
+      "context_chars": 367,
+      "context_items": 2,
+      "image_path": "",
+      "table_rows": 6,
+      "table_columns": 2,
+      "findings": []
+    },
+    {
+      "index": 6,
+      "content_type": "text",
+      "page_idx": 6,
+      "status": "pass",
+      "text_chars": 171,
+      "caption_count": 0,
+      "context_chars": 0,
+      "context_items": 0,
+      "image_path": "",
+      "table_rows": 0,
+      "table_columns": 0,
+      "findings": []
+    }
+  ]
+}

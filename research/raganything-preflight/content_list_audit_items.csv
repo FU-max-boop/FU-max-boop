@@ -1,0 +1,8 @@
+index,content_type,page_idx,status,text_chars,caption_count,context_items,context_chars,image_path,table_rows,table_columns
+0,text,0,pass,169,0,0,0,,0,0
+1,image,1,fail,0,1,1,169,/absolute/path/to/system_architecture.jpg,0,0
+2,table,2,warn,283,1,0,0,,5,4
+3,equation,3,warn,136,0,1,196,,0,0
+4,text,4,pass,196,0,0,0,,0,0
+5,table,5,pass,272,1,2,367,,6,2
+6,text,6,pass,171,0,0,0,,0,0

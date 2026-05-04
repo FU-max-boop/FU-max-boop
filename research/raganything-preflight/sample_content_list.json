@@ -1,0 +1,56 @@
+[
+  {
+    "type": "text",
+    "text": "Welcome to the RAGAnything System Documentation. This guide covers the advanced multimodal document processing capabilities and features of our comprehensive RAG system.",
+    "page_idx": 0
+  },
+  {
+    "type": "image",
+    "img_path": "/absolute/path/to/system_architecture.jpg",
+    "image_caption": [
+      "Figure 1: RAGAnything System Architecture"
+    ],
+    "image_footnote": [
+      "The architecture shows the complete pipeline from document parsing to multimodal query processing"
+    ],
+    "page_idx": 1
+  },
+  {
+    "type": "table",
+    "table_body": "| System | Accuracy | Processing Speed | Memory Usage |\n|--------|----------|------------------|--------------|\n| RAGAnything | 95.2% | 120ms | 2.1GB |\n| Traditional RAG | 87.3% | 180ms | 3.2GB |\n| Baseline System | 82.1% | 220ms | 4.1GB |\n| Simple Retrieval | 76.5% | 95ms | 1.8GB |",
+    "table_caption": [
+      "Table 1: Performance Comparison of Different RAG Systems"
+    ],
+    "table_footnote": [
+      "All tests conducted on the same hardware with identical test datasets"
+    ],
+    "page_idx": 2
+  },
+  {
+    "type": "equation",
+    "latex": "Relevance(d, q) = \\sum_{i=1}^{n} w_i \\cdot sim(t_i^d, t_i^q) \\cdot \\alpha_i",
+    "text": "Document relevance scoring formula where w_i are term weights, sim() is similarity function, and alpha_i are modality importance factors",
+    "page_idx": 3
+  },
+  {
+    "type": "text",
+    "text": "The system supports multiple content modalities including text, images, tables, and mathematical equations. Each modality is processed using specialized processors optimized for that content type.",
+    "page_idx": 4
+  },
+  {
+    "type": "table",
+    "table_body": "| Feature | Specification |\n|---------|---------------|\n| Supported Formats | PDF, DOCX, PPTX, XLSX, Images |\n| Max Document Size | 100MB |\n| Concurrent Processing | Up to 8 documents |\n| Query Response Time | <200ms average |\n| Knowledge Graph Nodes | Up to 1M entities |",
+    "table_caption": [
+      "Table 2: Technical Specifications"
+    ],
+    "table_footnote": [
+      "Specifications may vary based on hardware configuration"
+    ],
+    "page_idx": 5
+  },
+  {
+    "type": "text",
+    "text": "RAGAnything represents a significant advancement in multimodal document processing, providing comprehensive solutions for complex knowledge extraction and retrieval tasks.",
+    "page_idx": 6
+  }
+]

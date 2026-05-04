@@ -66,11 +66,13 @@ configuration before an evaluation run.
 
 Published branch: https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight
 
-### [RAG-Anything Preflight](research/raganything-preflight)
+### [RAG-Anything Content-List Audit + Preflight](research/raganything-preflight)
 
 A contribution around multimodal RAG reproducibility. I added a zero-API-call
-preflight utility that checks inputs, parser runtime, LightRAG install state,
-LLM/embedding configuration, numeric environment variables, and output paths.
+preflight utility, then extended the direct `content_list` insertion path with
+an offline integrity audit and small schema/context fixes. The audit catches
+placeholder image paths, missing captions/context, table/equation alias drift,
+and page-index issues before parser, LightRAG, LLM, embedding, or VLM calls.
 
 Published branch: https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight
 
