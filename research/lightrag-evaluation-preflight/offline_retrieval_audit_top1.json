@@ -1,0 +1,216 @@
+{
+  "generated_at": "2026-05-04T15:31:05.970776+00:00",
+  "dataset": "/Users/fu/Desktop/ai study/builds/hkuds-ra/LightRAG/lightrag/evaluation/sample_dataset.json",
+  "documents_dir": "/Users/fu/Desktop/ai study/builds/hkuds-ra/LightRAG/lightrag/evaluation/sample_documents",
+  "oracle": "/Users/fu/Desktop/ai study/builds/hkuds-ra/LightRAG/lightrag/evaluation/sample_retrieval_oracle.json",
+  "top_k": 1,
+  "summary": {
+    "queries": 6,
+    "average_recall_at_k": 0.9166666666666666,
+    "mean_reciprocal_rank": 1.0,
+    "full_recall_count": 5,
+    "no_hit_count": 0,
+    "multi_doc_cases": 1
+  },
+  "queries": [
+    {
+      "index": 1,
+      "question": "How does LightRAG solve the hallucination problem in large language models?",
+      "expected_documents": [
+        "01_lightrag_overview.md"
+      ],
+      "ranked_documents": [
+        {
+          "document": "01_lightrag_overview.md",
+          "score": 9.174098906886957
+        },
+        {
+          "document": "02_rag_architecture.md",
+          "score": 2.6625228011041635
+        },
+        {
+          "document": "04_supported_databases.md",
+          "score": 1.142819332757401
+        },
+        {
+          "document": "03_lightrag_improvements.md",
+          "score": 0.6444415385815881
+        },
+        {
+          "document": "05_evaluation_and_deployment.md",
+          "score": 0.5793400077015132
+        }
+      ],
+      "recall_at_k": 1.0,
+      "hit_at_k": true,
+      "reciprocal_rank": 1.0,
+      "first_expected_rank": 1
+    },
+    {
+      "index": 2,
+      "question": "What are the three main components required in a RAG system?",
+      "expected_documents": [
+        "02_rag_architecture.md"
+      ],
+      "ranked_documents": [
+        {
+          "document": "02_rag_architecture.md",
+          "score": 8.18525497251468
+        },
+        {
+          "document": "05_evaluation_and_deployment.md",
+          "score": 0.9766620186987038
+        },
+        {
+          "document": "01_lightrag_overview.md",
+          "score": 0.9165039820155678
+        },
+        {
+          "document": "03_lightrag_improvements.md",
+          "score": 0.18528518690902357
+        },
+        {
+          "document": "04_supported_databases.md",
+          "score": 0.08424452257182942
+        }
+      ],
+      "recall_at_k": 1.0,
+      "hit_at_k": true,
+      "reciprocal_rank": 1.0,
+      "first_expected_rank": 1
+    },
+    {
+      "index": 3,
+      "question": "How does LightRAG's retrieval performance compare to traditional RAG approaches?",
+      "expected_documents": [
+        "03_lightrag_improvements.md"
+      ],
+      "ranked_documents": [
+        {
+          "document": "03_lightrag_improvements.md",
+          "score": 7.061656453172086
+        },
+        {
+          "document": "04_supported_databases.md",
+          "score": 2.011453506870683
+        },
+        {
+          "document": "05_evaluation_and_deployment.md",
+          "score": 1.6474510559736983
+        },
+        {
+          "document": "01_lightrag_overview.md",
+          "score": 0.8852241777151604
+        },
+        {
+          "document": "02_rag_architecture.md",
+          "score": 0.36535494726328765
+        }
+      ],
+      "recall_at_k": 1.0,
+      "hit_at_k": true,
+      "reciprocal_rank": 1.0,
+      "first_expected_rank": 1
+    },
+    {
+      "index": 4,
+      "question": "What vector databases does LightRAG support and what are their key characteristics?",
+      "expected_documents": [
+        "04_supported_databases.md"
+      ],
+      "ranked_documents": [
+        {
+          "document": "04_supported_databases.md",
+          "score": 4.6768410798209
+        },
+        {
+          "document": "03_lightrag_improvements.md",
+          "score": 3.043058301844314
+        },
+        {
+          "document": "05_evaluation_and_deployment.md",
+          "score": 1.6927790502214355
+        },
+        {
+          "document": "02_rag_architecture.md",
+          "score": 1.520084138376556
+        },
+        {
+          "document": "01_lightrag_overview.md",
+          "score": 0.6374879728455713
+        }
+      ],
+      "recall_at_k": 1.0,
+      "hit_at_k": true,
+      "reciprocal_rank": 1.0,
+      "first_expected_rank": 1
+    },
+    {
+      "index": 5,
+      "question": "What are the four key metrics for evaluating RAG system quality and what does each metric measure?",
+      "expected_documents": [
+        "05_evaluation_and_deployment.md"
+      ],
+      "ranked_documents": [
+        {
+          "document": "05_evaluation_and_deployment.md",
+          "score": 9.697515052045803
+        },
+        {
+          "document": "03_lightrag_improvements.md",
+          "score": 2.595162813059752
+        },
+        {
+          "document": "01_lightrag_overview.md",
+          "score": 2.435322723521785
+        },
+        {
+          "document": "02_rag_architecture.md",
+          "score": 1.390720123785004
+        },
+        {
+          "document": "04_supported_databases.md",
+          "score": 0.08424452257182942
+        }
+      ],
+      "recall_at_k": 1.0,
+      "hit_at_k": true,
+      "reciprocal_rank": 1.0,
+      "first_expected_rank": 1
+    },
+    {
+      "index": 6,
+      "question": "What are the core benefits of LightRAG and how does it improve upon traditional RAG systems?",
+      "expected_documents": [
+        "01_lightrag_overview.md",
+        "03_lightrag_improvements.md"
+      ],
+      "ranked_documents": [
+        {
+          "document": "03_lightrag_improvements.md",
+          "score": 6.725484570081528
+        },
+        {
+          "document": "01_lightrag_overview.md",
+          "score": 3.210796205898942
+        },
+        {
+          "document": "04_supported_databases.md",
+          "score": 1.55283669002656
+        },
+        {
+          "document": "02_rag_architecture.md",
+          "score": 1.5083323164496147
+        },
+        {
+          "document": "05_evaluation_and_deployment.md",
+          "score": 0.736255857293844
+        }
+      ],
+      "recall_at_k": 0.5,
+      "hit_at_k": true,
+      "reciprocal_rank": 1.0,
+      "first_expected_rank": 1
+    }
+  ]
+}

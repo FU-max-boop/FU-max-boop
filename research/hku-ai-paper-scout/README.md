@@ -20,7 +20,7 @@ I prioritized projects that were:
 | OpenCUA / AgentNetBench | Static preflight plus evaluator-validity fixes for runtime package mutation, scroll scoring, key-sequence matching, and extra predicted actions | https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight |
 | RAG-Anything | Zero-API-call preflight plus direct `content_list` integrity audit for image paths, captions/context, table/equation aliases, and chunk context indexing | https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight |
 | DeepResearch-Eval | ReportEval preflight plus offline audit over 100 released Qwen reports, surfacing empty references, redundancy-risk pairs, and a zero topic-heading overlap candidate | https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight |
-| LightRAG | Evaluation preflight for RAGAS dataset, dependency, API-key, numeric-env, and endpoint readiness | https://github.com/FU-max-boop/LightRAG/tree/docs/eval-readiness-preflight |
+| LightRAG | RAGAS evaluation preflight plus offline retrieval audit showing top-k=1 partial coverage for the multi-document sample question and top-k=2 full recovery | https://github.com/FU-max-boop/LightRAG/tree/docs/eval-readiness-preflight |
 | Spider2 | DBT benchmark preflight and agent-facing task briefs to separate setup failures from agent failures | https://github.com/FU-max-boop/Spider2/tree/docs/spider2-dbt-repro-clarity |
 | Claw-Eval | Static scan over 300 autonomous-agent tasks to separate task readiness issues from model failures | https://github.com/FU-max-boop/claw-eval/tree/docs/claw-eval-preflight-anatomy |
 
