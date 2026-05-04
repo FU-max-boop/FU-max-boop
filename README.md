@@ -42,6 +42,7 @@ I reproduced the Spider2-DBT setup/evaluation path, found that only 61/68 tasks 
 Artifacts include:
 
 - a pushed Spider2 fork branch with docs/preflight commits
+- a PR-ready upstream compare view
 - task-level preflight CSV and Markdown summary
 - scripts for DBT asset checks, static task analysis, and task brief generation
 - generated briefs for `playbook001`, `jira001`, `quickbooks001`, and `gitcoin001`

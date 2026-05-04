@@ -29,6 +29,7 @@ I prepared two local commits on a fork branch:
 Fork branch:
 
 - [`FU-max-boop/Spider2:docs/spider2-dbt-repro-clarity`](https://github.com/FU-max-boop/Spider2/tree/docs/spider2-dbt-repro-clarity)
+- [PR-ready upstream compare view](https://github.com/xlang-ai/Spider2/compare/main...FU-max-boop:Spider2:docs/spider2-dbt-repro-clarity?expand=1)
 
 Patch files:
 
