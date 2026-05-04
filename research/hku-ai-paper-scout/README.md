@@ -17,7 +17,7 @@ I prioritized projects that were:
 | --- | --- | --- |
 | DeepCode | Config preflight for provider keys, MCP commands, dependency readiness, workspace paths, and model-run setup | https://github.com/FU-max-boop/DeepCode/tree/docs/deepcode-config-preflight |
 | AI-Researcher | Benchmark/env preflight plus README Docker image typo correction for autonomous research-agent runs | https://github.com/FU-max-boop/AI-Researcher/tree/docs/researcher-benchmark-preflight |
-| OpenCUA / AgentNetBench | Static preflight for trajectory JSON, screenshots, action schemas, coordinates, dependencies, model selection, endpoint config | https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight |
+| OpenCUA / AgentNetBench | Static preflight plus evaluator-validity fixes for runtime package mutation, scroll scoring, key-sequence matching, and extra predicted actions | https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight |
 | RAG-Anything | Zero-API-call preflight plus direct `content_list` integrity audit for image paths, captions/context, table/equation aliases, and chunk context indexing | https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight |
 | DeepResearch-Eval | ReportEval preflight plus offline audit over 100 released Qwen reports, surfacing empty references, redundancy-risk pairs, and a zero topic-heading overlap candidate | https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight |
 | LightRAG | Evaluation preflight for RAGAS dataset, dependency, API-key, numeric-env, and endpoint readiness | https://github.com/FU-max-boop/LightRAG/tree/docs/eval-readiness-preflight |

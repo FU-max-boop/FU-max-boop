@@ -57,12 +57,14 @@ plus a README correction for the Docker image tag.
 
 Published branch: https://github.com/FU-max-boop/AI-Researcher/tree/docs/researcher-benchmark-preflight
 
-### [OpenCUA AgentNetBench Preflight](research/opencua-agentnetbench-preflight)
+### [OpenCUA AgentNetBench Evaluator Validity + Preflight](research/opencua-agentnetbench-preflight)
 
 A contribution around GUI-agent benchmark reproducibility. I added a static
 preflight utility for AgentNetBench that validates trajectory JSON, screenshots,
 action schemas, coordinates, runtime dependencies, model selection, and endpoint
-configuration before an evaluation run.
+configuration before an evaluation run. I then fixed evaluator-validity issues
+around runtime package mutation, scroll direction/amount scoring, key-sequence
+comparison, and extra predicted actions, with offline regression tests.
 
 Published branch: https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight
 
