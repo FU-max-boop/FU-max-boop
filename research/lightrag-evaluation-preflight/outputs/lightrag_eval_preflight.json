@@ -1,0 +1,74 @@
+{
+  "generated_at": "2026-05-04T14:11:44.236432+00:00",
+  "ready": false,
+  "dataset": "/Users/fu/Desktop/ai study/builds/hkuds-ra/LightRAG/lightrag/evaluation/sample_dataset.json",
+  "documents_dir": "/Users/fu/Desktop/ai study/builds/hkuds-ra/LightRAG/lightrag/evaluation/sample_documents",
+  "rag_endpoint": "http://localhost:9621",
+  "summary": {
+    "passed": 9,
+    "warnings": 0,
+    "blockers": 3
+  },
+  "checks": [
+    {
+      "name": "dataset_cases",
+      "status": "pass",
+      "detail": "Found 6 test case(s) in sample_dataset.json"
+    },
+    {
+      "name": "dataset_required_fields",
+      "status": "pass",
+      "detail": "Every test case has `question` and `ground_truth` fields"
+    },
+    {
+      "name": "dataset_empty_fields",
+      "status": "pass",
+      "detail": "No required fields are empty"
+    },
+    {
+      "name": "dataset_duplicate_questions",
+      "status": "pass",
+      "detail": "No duplicate questions"
+    },
+    {
+      "name": "dataset_placeholder_content",
+      "status": "pass",
+      "detail": "No template placeholders"
+    },
+    {
+      "name": "dataset_project_labels",
+      "status": "pass",
+      "detail": "All cases include project labels"
+    },
+    {
+      "name": "documents_non_empty",
+      "status": "pass",
+      "detail": "Found 6 non-empty document file(s)"
+    },
+    {
+      "name": "evaluation_dependencies",
+      "status": "fail",
+      "detail": "Missing package(s): datasets, ragas, langchain-openai. Install with `pip install -e \".[evaluation]\"`."
+    },
+    {
+      "name": "llm_api_key",
+      "status": "fail",
+      "detail": "Set EVAL_LLM_BINDING_API_KEY or OPENAI_API_KEY before running RAGAS"
+    },
+    {
+      "name": "embedding_api_key",
+      "status": "fail",
+      "detail": "Set EVAL_EMBEDDING_BINDING_API_KEY, EVAL_LLM_BINDING_API_KEY, or OPENAI_API_KEY"
+    },
+    {
+      "name": "evaluation_numeric_env",
+      "status": "pass",
+      "detail": "EVAL_MAX_CONCURRENT=2, EVAL_QUERY_TOP_K=10"
+    },
+    {
+      "name": "rag_endpoint_format",
+      "status": "pass",
+      "detail": "Endpoint has a valid http(s) URL format. Connectivity is not checked."
+    }
+  ]
+}

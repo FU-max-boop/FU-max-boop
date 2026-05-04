@@ -47,6 +47,24 @@ Artifacts include:
 - scripts for DBT asset checks, static task analysis, and task brief generation
 - generated briefs for `playbook001`, `jira001`, `quickbooks001`, and `gitcoin001`
 
+### [Claw-Eval Static Task Preflight](research/claw-eval-preflight)
+
+A small contribution around trustworthy autonomous-agent evaluation. I scanned
+all 300 public Claw-Eval task definitions and added a static preflight utility
+that separates setup, asset, and metadata readiness issues from model-side
+agent failures before expensive benchmark runs.
+
+Published branch: https://github.com/FU-max-boop/claw-eval/tree/docs/claw-eval-preflight-anatomy
+
+### [LightRAG Evaluation Preflight](research/lightrag-evaluation-preflight)
+
+A small contribution around HKUDS LightRAG evaluation reproducibility. I added a
+zero-API-call preflight utility for the RAGAS evaluation workflow so users can
+catch dataset, dependency, API-key, numeric-env, and endpoint configuration
+issues before spending time or model budget.
+
+Published branch: https://github.com/FU-max-boop/LightRAG/tree/docs/eval-readiness-preflight
+
 ## How I Work
 
 I like turning a research idea into a visible artifact:
