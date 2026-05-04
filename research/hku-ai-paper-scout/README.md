@@ -19,7 +19,7 @@ I prioritized projects that were:
 | AI-Researcher | Benchmark/env preflight plus README Docker image typo correction for autonomous research-agent runs | https://github.com/FU-max-boop/AI-Researcher/tree/docs/researcher-benchmark-preflight |
 | OpenCUA / AgentNetBench | Static preflight for trajectory JSON, screenshots, action schemas, coordinates, dependencies, model selection, endpoint config | https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight |
 | RAG-Anything | Zero-API-call preflight for inputs, parser/runtime, LightRAG install state, LLM/embedding env, numeric config, output paths | https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight |
-| DeepResearch-Eval | ReportEval preflight plus README correction from topic-only input to report JSONL input for quality scoring | https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight |
+| DeepResearch-Eval | ReportEval preflight plus offline audit over 100 released Qwen reports, surfacing empty references, redundancy-risk pairs, and a zero topic-heading overlap candidate | https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight |
 | LightRAG | Evaluation preflight for RAGAS dataset, dependency, API-key, numeric-env, and endpoint readiness | https://github.com/FU-max-boop/LightRAG/tree/docs/eval-readiness-preflight |
 | Spider2 | DBT benchmark preflight and agent-facing task briefs to separate setup failures from agent failures | https://github.com/FU-max-boop/Spider2/tree/docs/spider2-dbt-repro-clarity |
 | Claw-Eval | Static scan over 300 autonomous-agent tasks to separate task readiness issues from model failures | https://github.com/FU-max-boop/claw-eval/tree/docs/claw-eval-preflight-anatomy |

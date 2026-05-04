@@ -1,0 +1,1580 @@
+From d190ee8993ff97ca3b0bedda2921acc57930ebb0 Mon Sep 17 00:00:00 2001
+From: FU-max-boop <ht3fudatou@163.com>
+Date: Mon, 4 May 2026 23:14:04 +0800
+Subject: [PATCH] Add offline report corpus audit
+
+---
+ README.md                                     |  19 +
+ analyze_report_corpus.py                      | 693 ++++++++++++++++++
+ .../report_audit_metrics.csv                  | 101 +++
+ .../report_audit_summary.json                 | 639 ++++++++++++++++
+ .../report_audit_summary.md                   |  73 ++
+ 5 files changed, 1525 insertions(+)
+ create mode 100644 analyze_report_corpus.py
+ create mode 100644 example/report_corpus_audit/report_audit_metrics.csv
+ create mode 100644 example/report_corpus_audit/report_audit_summary.json
+ create mode 100644 example/report_corpus_audit/report_audit_summary.md
+
+diff --git a/README.md b/README.md
+index f40bc7e..eda0f01 100644
+--- a/README.md
++++ b/README.md
+@@ -119,6 +119,25 @@ python preflight_reporteval.py \
+ Use `--strict` in CI to fail when blockers are found. The preflight does not
+ call LLMs, Firecrawl, or Jina.
+ 
++### 📎 Offline Corpus Audit
++
++To reproduce the static part of the released Qwen report corpus and triage
++reports before paid LLM judging, run the offline audit:
++
++```bash
++python analyze_report_corpus.py \
++  --inputpath data/report/qwen-reports.jsonl \
++  --topicpath data/topic/high_quality_topics.jsonl \
++  --output-dir example/report_corpus_audit
++```
++
++The audit computes report structure, citation/reference consistency, section
++lengths, and deterministic cross-section redundancy-risk proxies. It does not
++call LLMs, Jina, Firecrawl, or any external service.
++
++The generated CSV, JSON, and Markdown summaries are written under
++`example/report_corpus_audit/`.
++
+ ---
+ 
+ ## 📊 Data Formats
+diff --git a/analyze_report_corpus.py b/analyze_report_corpus.py
+new file mode 100644
+index 0000000..a6d907f
+--- /dev/null
++++ b/analyze_report_corpus.py
+@@ -0,0 +1,693 @@
++#!/usr/bin/env python3
++"""
++Offline corpus audit for DeepResearch-ReportEval reports.
++
++The official judge scripts use LLM calls for quality and repeatability scoring.
++This script reproduces the static, data-level part of the pipeline on the
++released report corpus and adds deterministic diagnostics for structure,
++citations, references, and cross-section redundancy risk. It does not call LLMs,
++Jina, Firecrawl, or any external service.
++"""
++
++from __future__ import annotations
++
++import argparse
++import csv
++import hashlib
++import json
++import math
++import re
++import statistics
++from collections import Counter, defaultdict
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++
++
++HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
++TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
++CITATION_RE = re.compile(r"\[(\d+)\]")
++REFERENCE_LINE_RE = re.compile(r"^\[(\d+)\]\s*,?\s*(.*)\s*$")
++TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$")
++TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_'-]*")
++
++STOPWORDS = {
++    "a",
++    "about",
++    "above",
++    "after",
++    "again",
++    "against",
++    "all",
++    "also",
++    "am",
++    "an",
++    "and",
++    "any",
++    "are",
++    "as",
++    "at",
++    "be",
++    "because",
++    "been",
++    "before",
++    "being",
++    "between",
++    "both",
++    "but",
++    "by",
++    "can",
++    "could",
++    "did",
++    "do",
++    "does",
++    "doing",
++    "down",
++    "during",
++    "each",
++    "few",
++    "for",
++    "from",
++    "further",
++    "had",
++    "has",
++    "have",
++    "having",
++    "he",
++    "her",
++    "here",
++    "hers",
++    "him",
++    "his",
++    "how",
++    "i",
++    "if",
++    "in",
++    "into",
++    "is",
++    "it",
++    "its",
++    "itself",
++    "more",
++    "most",
++    "no",
++    "nor",
++    "not",
++    "of",
++    "off",
++    "on",
++    "once",
++    "only",
++    "or",
++    "other",
++    "our",
++    "out",
++    "over",
++    "own",
++    "same",
++    "she",
++    "should",
++    "so",
++    "some",
++    "such",
++    "than",
++    "that",
++    "the",
++    "their",
++    "theirs",
++    "them",
++    "then",
++    "there",
++    "these",
++    "they",
++    "this",
++    "those",
++    "through",
++    "to",
++    "too",
++    "under",
++    "until",
++    "up",
++    "very",
++    "was",
++    "we",
++    "were",
++    "what",
++    "when",
++    "where",
++    "which",
++    "while",
++    "who",
++    "whom",
++    "why",
++    "will",
++    "with",
++    "would",
++    "you",
++    "your",
++}
++
++
++@dataclass
++class Section:
++    title: str
++    body: str
++    start: int
++    end: int
++
++    @property
++    def text(self) -> str:
++        if self.title == "Beginning of the report":
++            return self.body
++        return f"## {self.title}\n{self.body}".strip()
++
++
++def read_jsonl(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
++    records: list[dict[str, Any]] = []
++    with path.open("r", encoding="utf-8") as handle:
++        for raw_line in handle:
++            line = raw_line.strip()
++            if not line:
++                continue
++            records.append(json.loads(line))
++            if limit is not None and len(records) >= limit:
++                break
++    return records
++
++
++def load_topic_categories(path: Path | None) -> dict[str, str]:
++    if path is None or not path.exists():
++        return {}
++    topic_to_category: dict[str, str] = {}
++    for record in read_jsonl(path):
++        topic = str(record.get("topic", "")).strip()
++        category = str(record.get("category_str", "")).strip()
++        if topic and category:
++            topic_to_category[topic] = category
++    return topic_to_category
++
++
++def parse_sections(report: str) -> list[Section]:
++    matches = list(HEADING_RE.finditer(report))
++    if not matches:
++        return [Section("Full report", report.strip(), 0, len(report))]
++
++    sections: list[Section] = []
++    first = matches[0]
++    if first.start() > 0:
++        intro = report[: first.start()].strip()
++        if intro:
++            sections.append(Section("Beginning of the report", intro, 0, first.start()))
++
++    for idx, match in enumerate(matches):
++        body_start = match.end()
++        body_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(report)
++        sections.append(
++            Section(
++                title=match.group(1).strip(),
++                body=report[body_start:body_end].strip(),
++                start=match.start(),
++                end=body_end,
++            )
++        )
++    return sections
++
++
++def extract_title(report: str) -> str:
++    match = TITLE_RE.search(report)
++    return match.group(1).strip() if match else ""
++
++
++def is_reference_section(section: Section) -> bool:
++    normalized = section.title.lower().strip(" :")
++    return normalized in {"reference", "references"}
++
++
++def split_body_and_references(sections: list[Section]) -> tuple[str, Section | None]:
++    ref_section = next((section for section in sections if is_reference_section(section)), None)
++    if ref_section is None:
++        return "\n\n".join(section.text for section in sections), None
++    body = "\n\n".join(section.text for section in sections if section.start < ref_section.start)
++    return body, ref_section
++
++
++def parse_references(ref_section: Section | None) -> dict[int, str]:
++    if ref_section is None:
++        return {}
++    refs: dict[int, str] = {}
++    for line in ref_section.body.splitlines():
++        match = REFERENCE_LINE_RE.match(line.strip())
++        if match:
++            refs[int(match.group(1))] = match.group(2).strip()
++    return refs
++
++
++def tokenize(text: str) -> list[str]:
++    return [
++        token.lower()
++        for token in TOKEN_RE.findall(text)
++        if len(token) > 2 and token.lower() not in STOPWORDS
++    ]
++
++
++def cosine_similarity(left: Counter[str], right: Counter[str]) -> float:
++    if not left or not right:
++        return 0.0
++    overlap = set(left) & set(right)
++    dot = sum(left[token] * right[token] for token in overlap)
++    left_norm = math.sqrt(sum(value * value for value in left.values()))
++    right_norm = math.sqrt(sum(value * value for value in right.values()))
++    if left_norm == 0 or right_norm == 0:
++        return 0.0
++    return dot / (left_norm * right_norm)
++
++
++def jaccard_similarity(left: set[str], right: set[str]) -> float:
++    if not left or not right:
++        return 0.0
++    return len(left & right) / len(left | right)
++
++
++def section_citations(section: Section) -> set[int]:
++    return {int(match) for match in CITATION_RE.findall(section.text)}
++
++
++def topic_keyword_coverage(topic: str, report_title: str, sections: list[Section]) -> float:
++    topic_tokens = set(tokenize(topic))
++    if not topic_tokens:
++        return 0.0
++    heading_text = " ".join(
++        section.title for section in sections if not is_reference_section(section)
++    )
++    target_tokens = set(tokenize(f"{report_title} {heading_text}"))
++    return len(topic_tokens & target_tokens) / len(topic_tokens)
++
++
++def redundancy_pairs(
++    sections: list[Section],
++    min_section_chars: int,
++    top_k: int,
++) -> list[dict[str, Any]]:
++    candidates = [
++        section
++        for section in sections
++        if not is_reference_section(section)
++        and len(section.text) >= min_section_chars
++        and section.title != "Beginning of the report"
++    ]
++    token_counters = [Counter(tokenize(section.text)) for section in candidates]
++    token_sets = [set(counter) for counter in token_counters]
++    citation_sets = [section_citations(section) for section in candidates]
++
++    pairs: list[dict[str, Any]] = []
++    for left_idx in range(len(candidates) - 1):
++        for right_idx in range(left_idx + 1, len(candidates)):
++            lexical_cosine = cosine_similarity(
++                token_counters[left_idx],
++                token_counters[right_idx],
++            )
++            lexical_jaccard = jaccard_similarity(token_sets[left_idx], token_sets[right_idx])
++            citation_jaccard = jaccard_similarity(citation_sets[left_idx], citation_sets[right_idx])
++            risk = max(lexical_cosine, 0.7 * lexical_cosine + 0.3 * citation_jaccard)
++            pairs.append(
++                {
++                    "section_a": candidates[left_idx].title,
++                    "section_b": candidates[right_idx].title,
++                    "lexical_cosine": round(lexical_cosine, 4),
++                    "lexical_jaccard": round(lexical_jaccard, 4),
++                    "citation_jaccard": round(citation_jaccard, 4),
++                    "redundancy_risk": round(risk, 4),
++                }
++            )
++
++    pairs.sort(key=lambda item: item["redundancy_risk"], reverse=True)
++    return pairs[:top_k]
++
++
++def count_words(text: str) -> int:
++    return len(TOKEN_RE.findall(text))
++
++
++def median(values: list[float]) -> float:
++    if not values:
++        return 0.0
++    return float(statistics.median(values))
++
++
++def analyze_record(
++    record: dict[str, Any],
++    index: int,
++    topic_to_category: dict[str, str],
++    min_section_chars: int,
++    redundancy_threshold: float,
++    top_pairs: int,
++) -> dict[str, Any]:
++    topic = str(record.get("topic", "")).strip()
++    report = str(record.get("report", "")).strip()
++    sections = parse_sections(report)
++    report_title = extract_title(report)
++    body_text, ref_section = split_body_and_references(sections)
++    refs = parse_references(ref_section)
++    body_citations = {int(match) for match in CITATION_RE.findall(body_text)}
++
++    dangling = sorted(citation for citation in body_citations if citation not in refs)
++    unused_refs = sorted(ref_id for ref_id in refs if ref_id not in body_citations)
++    empty_refs = sorted(ref_id for ref_id, value in refs.items() if not value)
++
++    non_ref_sections = [section for section in sections if not is_reference_section(section)]
++    section_lengths = [len(section.text) for section in non_ref_sections]
++    word_count = count_words(report)
++    table_lines = len(TABLE_LINE_RE.findall(report))
++    pairs = redundancy_pairs(sections, min_section_chars=min_section_chars, top_k=top_pairs)
++    top_pair = pairs[0] if pairs else {}
++    high_risk_pairs = [
++        pair for pair in pairs if pair["redundancy_risk"] >= redundancy_threshold
++    ]
++    keyword_coverage = topic_keyword_coverage(topic, report_title, sections)
++
++    flags: list[str] = []
++    if ref_section is None:
++        flags.append("missing_reference_section")
++    if dangling:
++        flags.append("dangling_citations")
++    if empty_refs:
++        flags.append("empty_references")
++    if unused_refs:
++        flags.append("unused_references")
++    if len(non_ref_sections) < 4:
++        flags.append("few_sections")
++    if section_lengths and max(section_lengths) > 6500:
++        flags.append("very_long_section")
++    if word_count and len(body_citations) / max(word_count, 1) * 1000 < 8:
++        flags.append("low_citation_density")
++    if high_risk_pairs:
++        flags.append("high_redundancy_risk")
++    if keyword_coverage == 0:
++        flags.append("zero_topic_heading_overlap")
++    elif keyword_coverage < 0.18:
++        flags.append("low_topic_heading_overlap")
++
++    file_id = hashlib.md5(topic.encode("utf-8")).hexdigest()
++    return {
++        "index": index,
++        "file_id": file_id,
++        "topic": topic,
++        "category": topic_to_category.get(topic, ""),
++        "report_title": report_title,
++        "topic_keyword_coverage": round(keyword_coverage, 4),
++        "word_count": word_count,
++        "char_count": len(report),
++        "section_count": len(non_ref_sections),
++        "median_section_chars": round(median([float(value) for value in section_lengths]), 2),
++        "max_section_chars": max(section_lengths) if section_lengths else 0,
++        "table_lines": table_lines,
++        "citation_count": len(CITATION_RE.findall(body_text)),
++        "unique_citations": len(body_citations),
++        "reference_count": len(refs),
++        "dangling_citation_count": len(dangling),
++        "unused_reference_count": len(unused_refs),
++        "empty_reference_count": len(empty_refs),
++        "citation_density_per_1000_words": round(
++            len(CITATION_RE.findall(body_text)) / max(word_count, 1) * 1000,
++            2,
++        ),
++        "top_redundancy_risk": top_pair.get("redundancy_risk", 0.0),
++        "top_redundancy_pair": (
++            f"{top_pair.get('section_a', '')} <> {top_pair.get('section_b', '')}"
++            if top_pair
++            else ""
++        ),
++        "high_redundancy_pair_count": len(high_risk_pairs),
++        "audit_risk_score": len(flags),
++        "flags": ";".join(flags),
++        "top_pairs": pairs,
++    }
++
++
++def aggregate_category(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
++    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
++    for row in rows:
++        buckets[row.get("category") or "Uncategorized"].append(row)
++
++    summary: list[dict[str, Any]] = []
++    for category, items in sorted(buckets.items()):
++        summary.append(
++            {
++                "category": category,
++                "count": len(items),
++                "avg_words": round(statistics.mean(item["word_count"] for item in items), 2),
++                "avg_sections": round(statistics.mean(item["section_count"] for item in items), 2),
++                "avg_citations": round(statistics.mean(item["citation_count"] for item in items), 2),
++                "avg_top_redundancy_risk": round(
++                    statistics.mean(item["top_redundancy_risk"] for item in items),
++                    4,
++                ),
++                "avg_topic_keyword_coverage": round(
++                    statistics.mean(item["topic_keyword_coverage"] for item in items),
++                    4,
++                ),
++                "avg_audit_risk_score": round(
++                    statistics.mean(item["audit_risk_score"] for item in items),
++                    2,
++                ),
++            }
++        )
++    return summary
++
++
++def compact_row(row: dict[str, Any]) -> dict[str, Any]:
++    return {key: value for key, value in row.items() if key != "top_pairs"}
++
++
++def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    fieldnames = list(compact_row(rows[0]).keys()) if rows else []
++    with path.open("w", encoding="utf-8", newline="") as handle:
++        writer = csv.DictWriter(handle, fieldnames=fieldnames)
++        writer.writeheader()
++        for row in rows:
++            writer.writerow(compact_row(row))
++
++
++def build_summary(
++    rows: list[dict[str, Any]],
++    input_path: Path,
++    topic_path: Path | None,
++    redundancy_threshold: float,
++) -> dict[str, Any]:
++    top_risk_rows = sorted(
++        rows,
++        key=lambda row: (row["audit_risk_score"], row["top_redundancy_risk"]),
++        reverse=True,
++    )[:10]
++    low_overlap_rows = [
++        row
++        for row in sorted(rows, key=lambda row: row["topic_keyword_coverage"])
++        if "low_topic_heading_overlap" in row["flags"]
++        or "zero_topic_heading_overlap" in row["flags"]
++    ][:10]
++    return {
++        "generated_at": datetime.now(timezone.utc).isoformat(),
++        "input_path": str(input_path),
++        "topic_path": str(topic_path) if topic_path else None,
++        "report_count": len(rows),
++        "redundancy_threshold": redundancy_threshold,
++        "corpus_summary": {
++            "avg_words": round(statistics.mean(row["word_count"] for row in rows), 2),
++            "median_words": round(statistics.median(row["word_count"] for row in rows), 2),
++            "avg_sections": round(statistics.mean(row["section_count"] for row in rows), 2),
++            "avg_citations": round(statistics.mean(row["citation_count"] for row in rows), 2),
++            "reports_with_dangling_citations": sum(
++                1 for row in rows if row["dangling_citation_count"]
++            ),
++            "reports_with_empty_references": sum(
++                1 for row in rows if row["empty_reference_count"]
++            ),
++            "reports_with_high_redundancy_risk": sum(
++                1 for row in rows if row["high_redundancy_pair_count"]
++            ),
++            "reports_with_low_topic_heading_overlap": sum(
++                1 for row in rows if "low_topic_heading_overlap" in row["flags"]
++            ),
++            "reports_with_zero_topic_heading_overlap": sum(
++                1 for row in rows if "zero_topic_heading_overlap" in row["flags"]
++            ),
++            "max_top_redundancy_risk": max(
++                row["top_redundancy_risk"] for row in rows
++            ),
++        },
++        "category_summary": aggregate_category(rows),
++        "top_risk_reports": [compact_row(row) for row in top_risk_rows],
++        "low_topic_overlap_reports": [compact_row(row) for row in low_overlap_rows],
++    }
++
++
++def markdown_table(rows: list[dict[str, Any]], fields: list[str]) -> list[str]:
++    lines = [
++        "| " + " | ".join(fields) + " |",
++        "| " + " | ".join("---" for _ in fields) + " |",
++    ]
++    for row in rows:
++        values = [str(row.get(field, "")).replace("|", "\\|") for field in fields]
++        lines.append("| " + " | ".join(values) + " |")
++    return lines
++
++
++def write_markdown(summary: dict[str, Any], path: Path) -> None:
++    corpus = summary["corpus_summary"]
++    lines = [
++        "# DeepResearch-ReportEval Offline Corpus Audit",
++        "",
++        f"- Generated at: `{summary['generated_at']}`",
++        f"- Input path: `{summary['input_path']}`",
++        f"- Topic path: `{summary.get('topic_path') or ''}`",
++        f"- Reports scanned: {summary['report_count']}",
++        f"- Redundancy risk threshold: {summary['redundancy_threshold']}",
++        "",
++        "## Corpus Summary",
++        "",
++        f"- Average words per report: {corpus['avg_words']}",
++        f"- Median words per report: {corpus['median_words']}",
++        f"- Average sections per report: {corpus['avg_sections']}",
++        f"- Average citation markers per report: {corpus['avg_citations']}",
++        f"- Reports with dangling citations: {corpus['reports_with_dangling_citations']}",
++        f"- Reports with empty references: {corpus['reports_with_empty_references']}",
++        f"- Reports with high redundancy risk: {corpus['reports_with_high_redundancy_risk']}",
++        f"- Reports with low topic-heading overlap: {corpus['reports_with_low_topic_heading_overlap']}",
++        f"- Reports with zero topic-heading overlap: {corpus['reports_with_zero_topic_heading_overlap']}",
++        f"- Max top redundancy risk: {corpus['max_top_redundancy_risk']}",
++        "",
++        "## Category Summary",
++        "",
++    ]
++    lines.extend(
++        markdown_table(
++            summary["category_summary"],
++            [
++                "category",
++                "count",
++                "avg_words",
++                "avg_sections",
++                "avg_citations",
++                "avg_top_redundancy_risk",
++                "avg_topic_keyword_coverage",
++                "avg_audit_risk_score",
++            ],
++        )
++    )
++    lines.extend(
++        [
++            "",
++            "## Top Risk Reports",
++            "",
++        ]
++    )
++    lines.extend(
++        markdown_table(
++            summary["top_risk_reports"],
++            [
++                "index",
++                "category",
++                "word_count",
++                "section_count",
++                "reference_count",
++                "empty_reference_count",
++                "topic_keyword_coverage",
++                "top_redundancy_risk",
++                "audit_risk_score",
++                "flags",
++            ],
++        )
++    )
++    lines.extend(
++        [
++            "",
++            "## Low Topic-Heading Overlap Reports",
++            "",
++        ]
++    )
++    lines.extend(
++        markdown_table(
++            summary["low_topic_overlap_reports"],
++            [
++                "index",
++                "category",
++                "topic_keyword_coverage",
++                "report_title",
++                "flags",
++            ],
++        )
++    )
++    lines.extend(
++        [
++            "",
++            "## Metric Notes",
++            "",
++            "- `top_redundancy_risk` is a deterministic lexical/citation-overlap proxy, not an LLM judge score.",
++            "- `topic_keyword_coverage` is the fraction of non-stopword topic keywords found in the report title/headings.",
++            "- `audit_risk_score` is the number of static flags triggered for a report.",
++            "- The audit is meant to triage reports before paid LLM judging and to surface corpus-level failure patterns.",
++            "",
++        ]
++    )
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text("\n".join(lines), encoding="utf-8")
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description="Run offline structure/citation/redundancy audit over report JSONL."
++    )
++    parser.add_argument("--inputpath", default="data/report/qwen-reports.jsonl")
++    parser.add_argument("--topicpath", default="data/topic/high_quality_topics.jsonl")
++    parser.add_argument("--output-dir", default="example/report_corpus_audit")
++    parser.add_argument("--limit", type=int, help="Optional number of reports to scan")
++    parser.add_argument("--min-section-chars", type=int, default=200)
++    parser.add_argument("--redundancy-threshold", type=float, default=0.42)
++    parser.add_argument("--top-pairs", type=int, default=5)
++    return parser
++
++
++def main() -> int:
++    args = build_parser().parse_args()
++    input_path = Path(args.inputpath).expanduser()
++    topic_path = Path(args.topicpath).expanduser() if args.topicpath else None
++    output_dir = Path(args.output_dir).expanduser()
++
++    records = read_jsonl(input_path, limit=args.limit)
++    topic_to_category = load_topic_categories(topic_path)
++    rows = [
++        analyze_record(
++            record=record,
++            index=index,
++            topic_to_category=topic_to_category,
++            min_section_chars=args.min_section_chars,
++            redundancy_threshold=args.redundancy_threshold,
++            top_pairs=args.top_pairs,
++        )
++        for index, record in enumerate(records, 1)
++    ]
++
++    summary = build_summary(
++        rows=rows,
++        input_path=input_path,
++        topic_path=topic_path,
++        redundancy_threshold=args.redundancy_threshold,
++    )
++
++    write_csv(rows, output_dir / "report_audit_metrics.csv")
++    (output_dir / "report_audit_summary.json").write_text(
++        json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
++        encoding="utf-8",
++    )
++    write_markdown(summary, output_dir / "report_audit_summary.md")
++
++    print(f"Scanned {len(rows)} report(s).")
++    print(f"Wrote metrics: {output_dir / 'report_audit_metrics.csv'}")
++    print(f"Wrote summary: {output_dir / 'report_audit_summary.md'}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/example/report_corpus_audit/report_audit_metrics.csv b/example/report_corpus_audit/report_audit_metrics.csv
+new file mode 100644
+index 0000000..bb1ea08
+--- /dev/null
++++ b/example/report_corpus_audit/report_audit_metrics.csv
+@@ -0,0 +1,101 @@
++index,file_id,topic,category,report_title,topic_keyword_coverage,word_count,char_count,section_count,median_section_chars,max_section_chars,table_lines,citation_count,unique_citations,reference_count,dangling_citation_count,unused_reference_count,empty_reference_count,citation_density_per_1000_words,top_redundancy_risk,top_redundancy_pair,high_redundancy_pair_count,audit_risk_score,flags
++1,c11068b8592b1da0a5db8a3b80a14293,"Analyze how hormonal fluctuations during different life stages (adolescence, adulthood, menopause) influence memory, attention, emotional regulation, and neuroplasticity.",Health & Medicine,Hormonal Modulation of Cognition and Emotion Across the Lifespan,0.5333,3420,26878,7,3495.0,5086,0,112,43,43,0,0,4,32.75,0.482,Progesterone's Complex Influence on Mood and Memory <> Hormonal Interactions and Network-Level Dynamics,2,2,empty_references;high_redundancy_risk
++2,ce32f61a4942d3e86168b78b393a989c,"The system understands the knowledge of the principles of seismic sources in geophysics. The outline includes the basic theory of seismic sources, inversion methods (waveform, full waveform inversion), and analytical tools (such as beach balls, stress diagrams), among others.",Science & Technology,"A Comprehensive Analysis of Seismic Sources, Inversion Methods, and Analytical Tools in Geophysics",0.3913,3578,26678,6,4648.5,5146,0,126,34,34,0,0,1,35.22,0.482,Principles of Seismic Source Representation <> Applications of Seismic Source Theory Across Disciplines,3,2,empty_references;high_redundancy_risk
++3,f1c983ea8efb2941f16fb9d7811bae8e,"Conduct a comprehensive search and understanding of detailed information related to the teaching-free laser welding robot, including product introductions, market acceptance, recognized advantages by the market, etc.; focus on introducing the detailed specifics, advantages, quality, and competitive strengths of the welding arm.",Science & Technology,A Comprehensive Analysis of Teaching-Free Laser Welding Robots,0.3462,3804,29790,7,4062.0,5211,0,141,41,41,0,0,4,37.07,0.4371,Performance Metrics and Quality Enhancements <> The Welding Arm: Anatomy of a Competitive Advantage,1,2,empty_references;high_redundancy_risk
++4,8fcc65819d077abd090d66796f6c9c39,"Analyze the monster, elite, and boss system of 'Diablo' to uncover why it can continuously attract players to grind and maintain high engagement. Dive into the mysteries behind it, specifically researching aspects such as the types, quantity, categories, stats, loot, and skills of the monsters, and provide comprehensive data to guide independent game developers in designing game systems.",Science & Technology,"The Anatomy of Endless Grind: A Deep Dive into the Diablo Monster, Elite, and Boss System",0.25,3893,27366,7,3726.0,4827,0,107,32,32,0,0,3,27.49,0.5013,The Lure of the Legendary: Decoding Loot Systems and Progression Loops <> Strategic Implications for Game Design: Lessons from the Diablos,2,2,empty_references;high_redundancy_risk
++5,f579a57349b41f23ebf6c427cef00241,"What mathematical foundation is required for conducting research in machine learning and deep learning, and how to find the best quality resources online to quickly complete the learning of artificial intelligence mathematics foundations.",Science & Technology,A Comprehensive Guide to the Mathematical Foundations of Machine Learning and Deep Learning,0.4737,4226,33244,7,4648.0,6388,0,168,28,28,0,0,1,39.75,0.4759,Core Mathematical Disciplines for Applied Machine Learning and Deep Learning <> Synthesizing Knowledge for a Cohesive Foundation,5,3,empty_references;low_citation_density;high_redundancy_risk
++6,aa97835fe9450d9b87d38c32b0f0dc77,"The essence of Multiple Imputation, especially explained from a Bayesian perspective; the advantages and limitations of complete case analysis, particularly whether CCA is unbiased when used to estimate regression coefficients for categorical outcome variables.",Science & Technology,A Comprehensive Analysis of Multiple Imputation and Complete Case Analysis for Categorical Outcomes,0.4783,3316,24066,7,3247.0,4349,0,150,31,31,0,0,5,45.24,0.5742,Theoretical Foundations of Multiple Imputation from a Bayesian Perspective <> Practical Implementation and Reporting Standards,5,2,empty_references;high_redundancy_risk
++7,64b0ac5469696acc3d8f5dc95d3f6a1c,"Understand the latest developments in various fields of embodied intelligence, including reports from leading companies such as Google and Physical Intelligent, as well as papers published in top journals and conferences.",Science & Technology,The 2025 Frontier: A Deep Dive into the Latest Developments in Embodied Intelligence,0.2,3735,29634,7,3882.0,6034,0,143,50,50,0,0,4,38.29,0.5041,The Rise of Vision-Language-Action Models and Generalist Policies <> Pioneering Platforms and the Quest for Cross-Embodiment Transfer,1,2,empty_references;high_redundancy_risk
++8,cc3fd893a5fc8b14c66ea570e289d4ae,Write a review on the role of cytochrome complexes in the initial reactions of photosynthesis.,Science & Technology,A Comparative Analysis of Tesla and BYD: The Battery and Charging Frontiers,0.0,4487,33756,7,4803.0,5391,0,132,36,36,0,0,3,29.42,0.4635,The Race for Charging Supremacy: Supercharger Networks and Fast-Charging Infrastructure <> Global Market Position and Strategic Expansion,3,3,empty_references;high_redundancy_risk;zero_topic_heading_overlap
++9,e22959f6a93fdbe5795281e33c93fa86,"The complete process of hybrid breeding of winter wheat, from parent selection to offspring screening, covering specific operational steps in both laboratory and field management, including common techniques, time nodes, and key control points.",Science & Technology,A Comprehensive Analysis of the Hybrid Wheat Breeding Process,0.44,3267,24423,7,3083.0,4380,0,131,30,30,0,0,2,40.1,0.4354,Parent Selection: Foundations of Hybrid Vigor <> Screening and Evaluation: Identifying Superior Hybrids,1,2,empty_references;high_redundancy_risk
++10,1a1a636556146da2f609f95980cd3ee5,"Comprehensively explain the following topics: Introduction to Laser, Laser Physics, Laser Principles, Basics of Laser, Laser Theory and Operation, Laser Components, Laser Elements, Laser Characteristics.",Science & Technology,"A Comprehensive Analysis of Laser Fundamentals: Principles, Components, and Characteristics",0.3571,4385,30797,7,4899.0,5567,0,160,14,14,0,0,0,36.49,0.5014,Core Components and Operational Architecture of a Laser System <> Key Physical Characteristics Defining Laser Light,4,2,low_citation_density;high_redundancy_risk
++11,d9b74e798eee7de3b790c23595cc4666,In-depth study of the microbial diversity of Juniperus plants and extraction of information on their potential value in biotechnology applications from scientific papers,Science & Technology,A Comprehensive Analysis of the Microbial Diversity of Juniperus and Its Biotechnological Potential,0.3571,3604,27963,7,4067.0,4702,0,82,31,31,0,0,4,22.75,0.4454,"Characterization of the Juniperus Microbiome: Diversity, Composition, and Core Taxa <> Drivers of Microbial Community Structure in the Juniperus Holobiont",2,2,empty_references;high_redundancy_risk
++12,d9061a6b7cda8f80de65be20e06d2094,"Explores the synthesis of a novel cationic porphyrin containing four cationic quaternary ammonium groups and its potential in antimicrobial applications. The research approach combines the antibacterial performance of quaternary ammonium salts (stemming from the cationic ammonium centers) with the bacterial photobiological inactivation triggered by porphyrin as a photosensitizer (aPDT). The proposed novel cationic porphyrin is designed to serve as a potential photosensitizer for aPDT, capable of eliminating microorganisms under light exposure and exhibiting antibacterial effects in dark conditions due to the characteristics of quaternary ammonium salts. This material can be used for treating bacterial surfaces.",Science & Technology,A Deep Research Report on a Novel Cationic Porphyrin for Dual-Action Antimicrobial Applications,0.1778,3615,27183,7,4293.0,4527,0,64,19,19,0,0,2,17.7,0.4004,Mechanisms of Dual-Action Antimicrobial Efficacy <> Addressing Antimicrobial Resistance Through Innovative Design,0,3,empty_references;low_citation_density;low_topic_heading_overlap
++13,388708958635935fa6631b672c223e14,"How can the improvement of reasoning ability in large language models through reinforcement learning be explained, as well as the Grokking phenomenon observed in models after SFT?",Science & Technology,Enhancing Reasoning in Large Language Models: A Deep Dive into Reinforcement Learning and the Grokking Phenomenon,0.5714,2786,22257,5,4591.0,5804,0,118,39,39,0,0,5,42.35,0.4518,The Role of Reinforcement Learning in Developing Advanced Reasoning Capabilities <> Bridging the Gap: The Interplay Between Reinforcement Learning and the Grokking Effect,2,2,empty_references;high_redundancy_risk
++14,8e450533fa7a5dbf73c0efe3a1a4d4c5,"The effect of bulk ultrasonic treatment on metal and magnesium alloy grain boundaries, and the structural transformation model of magnesium alloy after ultrasonic treatment.",Science & Technology,The Effect of Bulk Ultrasonic Treatment on Metal and Magnesium Alloy Grain Boundaries and Structural Transformation,0.9167,3855,29590,7,3840.0,6601,0,109,46,46,0,0,7,28.27,0.5382,Structural Transformation in Magnesium Alloys Under Ultrasonic Influence <> Corrosion Resistance and Thermal Stability Enhancement,1,3,empty_references;very_long_section;high_redundancy_risk
++15,df6eb6f1c67edc53040e95901f0448fb,"Description of the biochemical composition characteristics of brown algae, as well as the species found in the Barents Sea and White Sea regions and their uses and purposes.",Science & Technology,"A Deep Research Report on the Biochemical Composition, Species, and Applications of Brown Algae in the Barents Sea and White Sea",0.5333,3570,26487,7,4015.0,4760,0,116,19,19,0,0,1,32.49,0.5247,Key Biochemical Compounds and Their Concentrations in Arctic Brown Algae <> Comparative Analysis of Species-Specific Biochemical Profiles,3,3,empty_references;low_citation_density;high_redundancy_risk
++16,6008c0655601cbdacd2eddcfc4c0ea04,"Evaluate the performance of chitosan and sodium alginate microcapsule shells in terms of Novec 1230 vapor permeability at 25 degrees Celsius, and analyze the effects of different cross-linking options.",Science & Technology,A Comparative Analysis of Chitosan and Sodium Alginate Microcapsule Shell Performance for Novec 1230 Vapor Permeability,0.5,2505,18884,7,2631.0,3982,0,50,14,14,0,0,6,19.96,0.5034,Direct Comparison of Vapor Permeability Coefficients <> Impact of Humidity and Environmental Conditions on Shell Permeability,5,3,empty_references;low_citation_density;high_redundancy_risk
++17,0df233a4fd2efb8a7ef4f08056722621,"Why are sensitivity and specificity important in T-cell antigen recognition, and what mechanisms can achieve sensitivity and specificity?",Science & Technology,The Dual Imperative of Sensitivity and Specificity in T-Cell Antigen Recognition,0.75,3847,28880,7,3985.0,5420,0,174,48,48,0,0,1,45.23,0.459,Pathways Enhancing T-Cell Sensitivity <> The Role of Mechanical Forces and Bond Dynamics in Discrimination,1,2,empty_references;high_redundancy_risk
++18,1db9950e8ba6fc204ba11a46e4668f9c,Why are the high-frequency components of brain electrical signals detected on the scalp significantly weaker than intracranial signals?,Science & Technology,A Deep Dive into the Attenuation of High-Frequency Brain Signals in Scalp EEG,0.4,3592,26138,7,3892.0,4358,0,60,17,17,0,0,2,16.7,0.5307,Physical Mechanisms of Signal Degradation: Volume Conduction and Low-Pass Filtering <> Biological Factors: Tissue Properties and Their Impact on Signal Propagation,5,3,empty_references;low_citation_density;high_redundancy_risk
++19,414b51aeae2012dcdf6acd287d39cf5d,What are the factors limiting the maximum distance of human astronomical observation?,Science & Technology,A Comprehensive Analysis of the Factors Limiting Human Astronomical Observation,0.8571,3705,27412,7,3592.0,4626,0,121,46,46,0,0,3,32.66,0.392,Atmospheric and Instrumental Constraints on Ground-Based Observatories <> Technological Frontiers: Advancements in Telescopes and Detectors,0,1,empty_references
++20,89dc1620ca09e6bf1e6697f5cae0a0f2,"Detailed analysis of the typing speed of various Chinese character input methods, including Double Pinyin, Wubi, and Pinyin.",Science & Technology,A Comparative Analysis of Typing Speeds and Performance in Chinese Character Input Methods,0.4615,3481,24982,7,3716.0,4447,0,88,24,24,0,0,9,25.28,0.6395,Quantitative Comparison of Input Method Speeds <> The Role of Normalization and Alternative Measurement Metrics,5,3,empty_references;low_citation_density;high_redundancy_risk
++21,b0523706d141e4f7e216863fb9c5d8a5,"Introduction to methods related to multi-robot formation cluster control (including principles, preferably with formulas).",Science & Technology,An Introduction to Methods for Multi-Robot Formation and Cluster Control,0.6364,3965,29286,7,3946.0,5439,0,107,28,28,0,0,0,26.99,0.487,Core Principles and Mathematical Foundations of Formation Control <> Consensus Algorithms and Graph-Theoretic Approaches,3,2,low_citation_density;high_redundancy_risk
++22,56fe83d733850f81e297f1c1f52c269c,"The construction of the YOLO v8 model, its improvements compared to previous versions, and a comparative analysis with other similar models",Science & Technology,A Comprehensive Research Report on the YOLOv8 Model,0.7273,3613,28362,7,4256.0,5045,0,156,33,33,0,0,3,43.18,0.4812,Evolutionary Improvements Over Previous YOLO Versions <> Performance Benchmarks and Comparative Analysis,2,2,empty_references;high_redundancy_risk
++23,8742737111254be4490be2a2a105e773,"Comprehensive analysis of the challenges faced by large language models (LLMs) in accurately interpreting legal norms while responding to user queries, with a focus on studying the effectiveness of retrieval-augmented generation (RAG) services in retrieving relevant passages from well-annotated legal knowledge bases.",Science & Technology,A Deep Dive into the Challenges of LLMs in Legal Interpretation and the Role of RAG Services,0.4286,3963,29953,7,4379.0,4982,0,96,21,21,0,0,0,24.22,0.5277,Performance Analysis of RAG Systems in Well-Annotated Legal Knowledge Bases <> Synthesis: Bridging the Gap Between AI Capabilities and Legal Realities,5,2,low_citation_density;high_redundancy_risk
++24,04f3d7f132ef0458d150dc9930d1d444,"A comprehensive review of biochar preparation processes and characterization techniques. Study biochar preparation methods, structural properties, and performance evaluation in various application fields, analyzing the principles and application scope of commonly used characterization techniques.",Science & Technology,"A Comprehensive Review of Biochar Preparation, Characterization, and Application",0.5714,4336,32456,7,4783.0,5260,0,146,19,19,0,0,1,33.67,0.5713,Structural Properties and Performance Correlation <> Application in Soil Amendment and Wastewater Treatment,5,3,empty_references;low_citation_density;high_redundancy_risk
++25,c7b80e4a0b7b09cd9b86e35f078cbcb0,"A study on Marvin Minsky's ideas, particularly his book 'The Society of Mind,' is conducted alongside a parallel study of Francisco Varela, focusing on analyzing the criticisms of his embodied mind theory and the different types of artificial intelligence advocated in his work. Finally, conclusions are drawn through the research and the trends in the development of artificial intelligence are observed, analyzing whether they align more closely with Minsky's or Varela's views, and to what extent this alignment should occur.",Science & Technology,A Comparative Analysis of Minsky's Society of Mind and Varela's Embodied Cognition in the Context of Artificial Intelligence,0.3077,4011,30514,7,4422.0,5485,0,147,37,37,0,0,4,36.65,0.5942,Analyzing the Alignment of 2025 AI Trends with Minsky and Varela <> Synthesis and Future Trajectory of Artificial Intelligence,1,2,empty_references;high_redundancy_risk
++26,380befd7c98f2598b18d1a0c36549a22,"Taking the economies of Southeast Asian countries as research subjects, study their development, characteristics, and causal analysis.",Economy & Business,"A Deep Dive into the Economic Development, Characteristics, and Causal Analysis of Southeast Asian Economies",0.5833,3492,27817,7,3606.0,4846,0,112,42,42,0,0,4,32.07,0.4498,"The Green Transition: Economic Opportunities and Energy Imperatives <> Future Trajectories: Synthesizing Growth, Technology, and Sustainability",1,2,empty_references;high_redundancy_risk
++27,04c83fa712f2e917218dd116dfa3f318,Which financial asset has consistently grown over the past 100 years without experiencing significant sharp declines?,Economy & Business,A Century of Market Volatility: An Analysis of Consistent Growth in Financial Assets,0.2727,4113,30046,7,4353.0,5703,0,121,20,20,0,0,0,29.42,0.5482,Comparative Performance: A Century of Returns Across Major Asset Classes <> The Risk-Reward Spectrum: Evaluating Volatility and Drawdowns,5,2,low_citation_density;high_redundancy_risk
++28,8bad207aae1d308d70850368ce38fec4,"Please explain the emerging research in the field of receptor pharmacology, focusing on the following areas: taste GPCRs, receptor dimerization, allosteric effects, cAMP and mood disorders, microdomains, opioids and 5-HTA biased agonists, psychedelic drugs for mental disorders, lithium and novel drugs for bipolar disorders, cAMP cardiac drugs—especially different PDE isoenzymes.",Health & Medicine,An In-Depth Analysis of Emerging Research in Receptor Pharmacology,0.5588,4228,32181,8,3676.0,5618,0,113,40,40,0,0,0,26.73,0.4893,"Microdomains and Biased Agonism: Shaping Specific Cellular Outcomes <> Novel Therapeutic Frontiers: Psychedelics, Opioids, and Bipolar Disorder Drugs",2,1,high_redundancy_risk
++29,5ac5b21f8aeb2ad0685f775a78106352,"Is it feasible to implement a dimming system simulating natural light for broiler chickens starting on the day of hatch? This system includes 16 hours of lighting with gradually dimming light, 6 hours of complete darkness, and 1 hour of gradually intensifying light to simulate sunset and sunrise effects.",Science & Technology,A Feasibility Analysis of a Natural Light Simulation System for Broiler Chickens from Hatch,0.3333,3732,28154,7,3826.0,4831,0,114,35,35,0,0,5,30.55,0.4299,The Critical Role of Continuous Darkness in Broiler Welfare and Performance <> Influence on Bone Development and Musculoskeletal Health,1,2,empty_references;high_redundancy_risk
++30,dd6fe963bd0fe54b3ace6b38e4057f4e,"LDL performs multiple functions in the human body. Some suggest that excessively lowering its levels might have adverse effects on health. Moreover, research indicates that elderly individuals with higher LDL or total cholesterol levels tend to have lower overall mortality rates. Further investigation into issues related to this LDL level is desired.",Health & Medicine,A Comprehensive Analysis of LDL Cholesterol Levels: Balancing Cardiovascular Risk and Potential Adverse Effects,0.1562,2821,20902,1,19065.0,19065,0,84,29,29,0,0,3,29.78,0.0,,0,4,empty_references;few_sections;very_long_section;low_topic_heading_overlap
++31,92a443d04f512e1c30ccefdba6f6e298,"From the perspective of increasing underwater breath-holding time and endurance (anaerobic work frequency), analyze the respiratory system development of synchronized swimming athletes in different age groups of girls (7-12 years old, 13-15 years old, and over 15 years old).",Health & Medicine,A Developmental Analysis of Respiratory System Adaptations in Female Synchronized Swimmers Across Age Groups,0.5,3337,25880,7,3647.0,4226,0,102,37,37,0,0,3,30.57,0.5628,Advanced Development: Maximizing Endurance and Anaerobic Efficiency (Over 15 Years) <> Integrated Physiological Responses: Oxygen Conservation and Anaerobic Work Frequency,5,2,empty_references;high_redundancy_risk
++32,d659c6eb92a49668419e652c2c27d50a,What is the definition of a psychologically mature personality? What are the assessment criteria? What methods or steps can be used to achieve it? What techniques can be used to diagnose the current state and reach the ideal state?,Health & Medicine,A Comprehensive Research Report on Psychological Maturity,0.375,3914,30422,7,4261.0,5745,0,157,27,27,0,0,2,40.11,0.4483,Defining Psychological Maturity: A Multifaceted Construct <> Synthesis and Implications for Personal and Professional Development,3,3,empty_references;low_citation_density;high_redundancy_risk
++33,d8c4960a10387ff2459517fc3b989af2,Randomized Controlled Trial Protocol on the Impact of Drinking Matcha and Chamomile Tea on the Severity of Primary Dysmenorrhea,Health & Medicine,A Protocol for a Randomized Controlled Trial on the Impact of Matcha and Chamomile Tea on Primary Dysmenorrhea,0.8333,4171,30621,7,4479.0,6141,0,99,26,26,0,0,2,23.74,0.4191,Participant Selection: Inclusion and Exclusion Criteria <> Outcome Measures and Data Collection Procedures,0,2,empty_references;low_citation_density
++34,057559cbfa3e206aec86f5a8aa9ce938,How to purify a membrane transport protein and achieve functional analysis through artificial liposome reconstruction.,Science & Technology,A Comprehensive Guide to the Purification and Functional Analysis of Membrane Transport Proteins,0.7,3850,29978,7,4059.0,5760,0,143,49,49,0,0,7,37.14,0.5084,Artificial Liposome Reconstitution: Methods and Impact on Functionality <> Integrated Workflow and Experimental Considerations,4,2,empty_references;high_redundancy_risk
++35,78d44a05356559014492e2bde46cff94,What are the main differences between sertraline and escitalopram? Why would a doctor choose to prescribe one medication over the other based on the patient's condition? Please compare the two in terms of their effects on causing drowsiness and nausea.,Health & Medicine,"A Comparative Analysis of Sertraline and Escitalopram: Efficacy, Tolerability, and Clinical Selection",0.25,3165,24161,7,3523.0,4341,0,158,9,9,0,0,0,49.92,0.5222,"Side Effect Profile: Drowsiness, Nausea, and Other Common Adverse Events <> Synthesis and Clinical Decision-Making Framework",3,2,low_citation_density;high_redundancy_risk
++36,9b32e645a999be1f6bc931245b1481f6,"The absorption characteristics of various types of Omega-3 fatty acids, including herring, mackerel, ethyl esters, and triglycerides, as well as analysis of administration methods and their reasons.",Health & Medicine,A Comprehensive Analysis of Omega-3 Fatty Acid Absorption and Administration,0.5556,3662,27744,7,3858.0,4298,0,119,41,41,0,0,6,32.5,0.4653,Comparative Bioavailability of Ethyl Ester and Triglyceride Omega-3 Forms <> Superiority of Re-Esterified Triglycerides and Alternative Chemical Structures,2,2,empty_references;high_redundancy_risk
++37,6b17d638dbe38d50c2d14d759210f806,"Research on the booming box office of horror movies in the context of the economic recession in the United States during the 1970s to 1980s, including the connections and underlying causes.",Politics & Society,The Booming Box Office of Horror: Economic Recession and Societal Anxiety in 1970s-1980s America,0.4667,3649,26278,7,3828.0,4732,0,104,23,23,0,0,1,28.5,0.4423,"The Psychological Appeal: Catharsis, Control, and Escapism <> The Enduring Legacy: From Economic Crisis to Modern Resonance",2,3,empty_references;low_citation_density;high_redundancy_risk
++38,1b4c3d894af70868f1a1ca62edc4b2a7,The Role and Powers of the Court in the Pretrial Stage of Criminal Proceedings,Politics & Society,The Role and Powers of the Court in the Pretrial Stage of Criminal Proceedings,1.0,4429,30877,7,4341.0,5987,0,102,23,23,0,0,2,23.03,0.5611,Gatekeeper Over Evidence: Rulings on Suppression and Admissibility <> Resolving Legal Disputes: The Court's Authority Over Pretrial Motions,4,3,empty_references;low_citation_density;high_redundancy_risk
++39,942d630d7105c0bad7a3b14542b6d7ab,"Analyze the relationship between gaze and power based on Foucault's theory of panoramic prison, elucidate their interactions, and delve deeply into the illusion of freedom.",Politics & Society,"The Gaze and the Panopticon: A Deep Analysis of Power, Discipline, and the Illusion of Freedom",0.3333,3229,23707,7,3347.0,4637,0,128,18,18,0,0,1,39.64,0.488,"The Mechanics of Panoptic Power: Architecture, Visibility, and Self-Regulation <> The Gaze as a Technology of Knowledge: Producing Subjects and Truths",1,3,empty_references;low_citation_density;high_redundancy_risk
++40,c7d8793d0840e06bc8ce241cd4f5bcbb,Research on urban commuting difficulty is conducted based on the ratio of average commuting distance to the built-up area of the city.,Politics & Society,A Comparative Analysis of Urban Commuting Difficulty: The Ratio of Average Distance to Built-Up Area,0.6667,3940,29054,7,4063.0,6080,0,105,34,34,0,0,6,26.65,0.5652,Comparative Commuting Intensity Across Global Metropolises <> Analytical Insights from Case Studies of Diverse Urban Models,5,2,empty_references;high_redundancy_risk
++41,20eb620b18657245a35bf8fd045f1b40,How do immigrant groups maintain their historical and cultural heritage in new environments? Provide several typical examples and analyze them.,History & Culture,The Resilience of Heritage: Immigrant Group Strategies for Cultural Preservation in New Environments,0.3846,3514,26828,8,3277.5,4488,0,80,26,26,0,0,4,22.77,0.4715,Community-Led Initiatives as the Cornerstone of Heritage Continuity <> Synthesis: A Multi-Faceted Approach to Sustaining Heritage Across Generations,3,3,empty_references;low_citation_density;high_redundancy_risk
++42,26b1c056f609d8e950a25e64e708dd60,"Prepare an academic report on the historical development of neoliberalism, including its background, the main contents of neoliberalist thought, and its political impact in the real world. Conduct an in-depth analysis of the nature and causes of neoliberalism, and elaborate on its evolution in contemporary society.",History & Culture,"A Comprehensive Analysis of Neoliberalism: Origins, Ideology, and Global Impact",0.32,3866,29917,7,4106.0,5460,0,147,35,35,0,0,2,38.02,0.4091,Core Tenets and Policy Manifestations of Neoliberal Thought <> The Political Rise of Neoliberalism: From Marginal Critique to Global Doctrine,0,1,empty_references
++43,b9b9b9ed42ac51af84ad42d135896df0,What are the main schools of thought in the study of intellectual history? What are the characteristics of their methods in studying intellectual history?,History & Culture,A Comprehensive Analysis of Schools of Thought in Intellectual History,0.4444,3569,26527,8,3147.5,4390,0,110,19,19,0,0,0,30.82,0.4729,Methodological Divergence: Text-Centric vs. Multi-Modal Approaches <> Synthesis and Conclusion: The Evolving Landscape of Intellectual Inquiry,3,2,low_citation_density;high_redundancy_risk
++44,229912b72fda25fb118ede0b3ff702fd,"Write a comprehensive and informative article covering all aspects of medieval cats and dogs, including culture, mythology, legends, fictional stories, superstitions, as well as interesting facts and tales, and examine historical sources related to these topics.",History & Culture,"A Comprehensive Analysis of Medieval Cats and Dogs: Myth, Reality, and Symbolism",0.16,3386,24606,7,3177.0,3883,0,123,38,38,0,0,0,36.33,0.4524,"Feline Enigmas: From Divine Veneration to Satanic Scapegoats <> The Plague, Propaganda, and the Modern Legacy of Medieval Animal Myths",2,2,high_redundancy_risk;low_topic_heading_overlap
++45,9054e2b8503b899ca97c0b0429358d38,"Explore methods for analyzing EEG signals, summarize possible approaches, and generate a matrix. Summarize the calculation formulas, detailed principles, physical significance of the results, application scenarios, and algorithm categories (time domain, frequency domain, time-frequency domain) of each algorithm or EEG signal analysis method. Conclude which methods are suitable for brain-computer interface and visual occipital region analysis.",Science & Technology,A Comprehensive Analysis of EEG Signal Processing Methods,0.3714,3454,26495,7,4094.0,4692,0,119,28,28,0,0,5,34.45,0.6509,Application in Brain-Computer Interfaces and Visual Cortex Analysis <> Synthesis and Recommendations for Specific Applications,4,2,empty_references;high_redundancy_risk
++46,e0fc3229bf9f338d7166ea519c1e231a,"Conduct a comprehensive analysis of all the films directed by Feng Xiaogang, evaluate the overall quality and level of his works, and provide a complete ranking along with detailed reasons and analysis.","Art, Music & Literature",A Comprehensive Analysis of the Cinematic Works of Feng Xiaogang,0.3889,3750,26835,7,3538.0,6974,0,99,24,24,0,0,2,26.4,0.4535,The Peak of Critical Acclaim: International Recognition and Artistic Mastery <> A Final Ranking: Evaluating the Complete Filmography,2,4,empty_references;very_long_section;low_citation_density;high_redundancy_risk
++47,6a58856a07045061161091aacf707d79,Write a comprehensive article on the topic 'Body and Attention: The Phenomenology of Embodiment.',"Art, Music & Literature",The Phenomenology of Embodiment: A Deep Dive into Body and Attention,0.5,3001,21363,7,2931.0,4129,0,99,21,21,0,0,0,32.99,0.4182,"Foundational Concepts: The Lived Body vs. the Objective Body <> Synthesizing Perspectives: Embodiment, Power, and Agency",0,1,low_citation_density
++48,afd30b1833d0801c69aadc90c9920fa0,"In today's era, with the significant lowering of the threshold for photography, how can we construct an evaluation system to distill the essence of the times from numerous photographic works?","Art, Music & Literature",Constructing a Framework for Evaluating Photographic Works to Distill the Essence of the Times,0.4,3023,24190,7,2700.0,5290,0,88,35,35,0,0,3,29.11,0.3326,Foundational Dimensions: A Synthesis of Core Evaluation Criteria <> Case Study Application: Applying the Framework to Contemporary Works,0,1,empty_references
++49,a9de3a4e007430c064c15e48602c3848,"Provide a detailed study of the personal life and work of French composer and pianist Cécile Chaminade, including her anecdotes and true stories.","Art, Music & Literature",A Comprehensive Study of Cécile Chaminade: The Life and Work of a French Musical Phenomenon,0.5333,4024,28995,7,3987.0,4720,0,247,41,41,0,0,3,61.38,0.3895,"The International Star: A Global Career and Commercial Success <> The Legend and Its Reality: Anecdotes, Myths, and the Chaminade Narrative",0,1,empty_references
++50,32088eb7dbe7741922530fc3732af90f,"What cognitive mechanisms underlie the experience of sublime in both visual art and classical music, and how are these represented in literary descriptions?","Art, Music & Literature",A Cognitive and Literary Analysis of the Sublime in Visual Art and Classical Music,0.6667,3625,26916,7,3500.0,5054,0,122,41,41,0,0,2,33.66,0.5179,The Philosophical Foundations of the Sublime: From Language to Reason <> Literary and Rhetorical Constructions of the Sublime,2,2,empty_references;high_redundancy_risk
++51,dee361ca2c75223d31486dfb0832f8f6,"Detailed commentary on the first verse of the first chapter to the sixth chapter of the 'Śrīmad Bhāgavatam', analyzing the connection between the chapters.","Art, Music & Literature",A Structural and Thematic Analysis of the First Six Chapters of the Śrīmad Bhāgavatam,0.2727,4010,26212,7,3780.0,5319,0,77,10,10,0,0,0,19.2,0.5642,The Sages' Inquiry: Establishing the Central Questions of the Bhāgavatam <> Synthesis of Purpose: How the Chapters Form a Cohesive Narrative,5,2,low_citation_density;high_redundancy_risk
++52,63824272e93e26ea4da80d3ce13ac776,"Based on information from the internet, analyze the key stages in Maxim Gorky's works that reflect literary naturalism, explore the possible influence of the connection between Russian and European literature on the emergence of naturalism as a literary movement, and apply these studies to Gorky's works and intellectual exploration.","Art, Music & Literature",Maxim Gorky: A Journey from Naturalism to Socialist Realism,0.4,3666,27597,7,3662.0,5103,0,136,47,47,0,0,5,37.1,0.4088,The Foundations of Naturalism in Gorky's Early Works <> The Transatlantic Dialogue: French Influence and the Reception of Russian Literature,0,1,empty_references
++53,d8023eeb2b82aa1398600213616731e5,Research all currency information in all the 'The Legend of Heroes' series.,Entertainment & Fashion,An Economic Deep Dive into the Currency of Zemuria,0.1667,3333,23295,7,3103.0,4255,0,85,16,16,0,0,4,25.5,0.5737,The Mira: A Universal Currency Across Zemuria <> Economic Stability and the Mechanics of Value,1,4,empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap
++54,3e7589a37f425aa63dfe0c6d68f2f04a,"A complete, unique, and professional in-depth guide to 'Fortnite' tailored for ranked players, covering expert advice, key tips and pitfalls, overall rotation mechanics, and the best ways to use currently popular items and loot.",Entertainment & Fashion,A Comprehensive Guide to Ranked Fortnite for Expert Players,0.28,3770,26761,7,3952.0,4804,0,141,26,26,0,0,0,37.4,0.4606,"The Ranked System: Mechanics, Progression, and Pitfalls <> The Future of Ranked Competition and Community Feedback",1,2,low_citation_density;high_redundancy_risk
++55,828af8914ba41d5ae0d60cc0ad525017,"Analysis of the current status of the LoveLive! project, including the current situation and development status of each group, the planning and assessment of the groups' future, current fans' perspectives, evaluations, and opinions on the project, as well as the project's future development direction and the possibility of regaining its brilliance.",Entertainment & Fashion,"A Deep Dive into the Love Live! Franchise: Current Status, Future Trajectory, and Fan Sentiment",0.2609,3009,21181,7,3147.0,4795,0,64,12,12,0,0,0,21.27,0.5121,Future Trajectories: The Path Towards Brilliance or Evolution? <> Synthesis and Outlook: The Franchise's Resilience and Future Challenges,2,2,low_citation_density;high_redundancy_risk
++56,b52abe767820c3d52e2efaca25e9b0d9,"Conduct AI-assisted training tasks for dragon boat rowing, plan to collect data through sensors or machine vision methods, and then train deep learning models. Please provide the types of data to be collected, recommended equipment to be used, and how to utilize this data to train models to help improve competition performance.",Science & Technology,"AI-Assisted Training for Dragon Boat Rowing: A Research Report on Data, Sensors, and Deep Learning Applications",0.4667,3113,23111,7,2847.0,4766,0,90,32,32,0,0,4,28.91,0.4091,Core Performance Metrics for Dragon Boat Analysis <> Optimizing Crew Synchronization Through Biomechanical Analysis,0,1,empty_references
++57,62971f272ec6e4685c7d8938fb601f5b,"Query all information related to the background story and skins of Teemo Omega Squad, including data on other characters under this theme.",Entertainment & Fashion,A Deep Dive into the Omega Squad Narrative and Skins of League of Legends,0.2308,2639,18098,7,2622.0,3152,0,98,19,19,0,0,1,37.14,0.4694,Character Roles and Design Within the Squad <> Thematic Inspirations and Visual Cues,2,3,empty_references;low_citation_density;high_redundancy_risk
++58,24572554aa8ba1547b4d68da00f127fa,"Investigate the history of the 'Zelda' series and explain the story of 'Tears of the Kingdom' in a simple and easy-to-understand way for those who are unfamiliar with gaming history, making it comprehensible even to non-fans.",Entertainment & Fashion,A Comprehensive History of The Legend of Zelda Series and an Explanation of *Tears of the Kingdom*,0.2353,3563,25016,7,3021.0,5935,0,142,26,26,0,0,3,39.85,0.5213,"A New Dawn Over Hyrule: An Overview of *Tears of the Kingdom* <> The Saga Continues: Characters, Lore, and the Eternal Conflict",1,3,empty_references;low_citation_density;high_redundancy_risk
++59,b13d1996af05bb265fd3954652ec9854,"Since the construction of the wind tunnel, McLaren F1 team's aerodynamic design level has continuously improved. Why has such a significant breakthrough been achieved in just a few years? By the F1 races up to 2025, McLaren cars have demonstrated a clear advantage compared to other teams, even surpassing the competitiveness of Red Bull Racing's Max Verstappen in his Red Bull car. Analyze the reasons for McLaren's success and its advantages in specific aspects.",Sports & Fitness,A Deep Dive into McLaren's 2025 Formula 1 Dominance,0.1538,3758,27953,7,3871.0,5468,0,132,26,26,0,0,4,35.13,0.5008,The Core of Success: Aerodynamic Superiority and Balance <> Comparative Analysis: The Chasm with Red Bull Racing,5,4,empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap
++60,c67f0ef046b6f001dbcddd80fcadb2fe,"Find a racket with a large sweet spot, preferring a solid hitting feel.",Sports & Fitness,A Deep-Dive Analysis of Tennis Rackets with Large Sweet Spots and Solid Hitting Feel,0.7778,3690,27149,7,3624.0,4635,0,146,30,30,0,0,1,39.57,0.7407,Comparative Assessment of Recommended Racket Models <> Synthesis and Strategic Recommendations,5,2,empty_references;high_redundancy_risk
++61,435f72940105ae805770caf4009b84f0,Study the taste of brandies from different origins and how these flavors affect pricing.,Economy & Business,"A Comparative Analysis of Brandy Origins, Flavor Profiles, and Pricing Dynamics",0.25,4149,29001,7,4170.0,5096,0,129,13,13,0,0,1,31.09,0.4756,The French Foundations: Cognac and Armagnac <> Comparative Flavor Profiles and Their Economic Impact,4,3,empty_references;low_citation_density;high_redundancy_risk
++62,4cb4c0302d43a1ea01f6863e372e473b,"As the primary meat source for cat food, compared to chicken, goose, duck, and rabbit meat, what are the specific differences and advantages of pigeon meat in meeting the nutritional needs of cats? Please provide a detailed comparison and analyze how these advantages affect sales.",Economy & Business,A Comparative Analysis of Pigeon Meat as a Nutritional Ingredient in Cat Food,0.24,3112,22514,7,3269.0,4077,0,87,17,17,0,0,3,27.96,0.6173,Market Positioning and Consumer Perception of Novel Proteins <> Strategic Implications for Cat Food Formulation and Sales,5,3,empty_references;low_citation_density;high_redundancy_risk
++63,b8c301cb9b03e74157c13e0819aa3ead,Conduct in-depth research and search for the best men's perfumes suitable for hot weather. What factors contribute to the commercial success of these perfumes?,Economy & Business,A Comprehensive Analysis of Men's Perfumes for Hot Weather and the Drivers of Their Commercial Success,0.5,3579,27276,7,3780.0,4563,0,141,34,34,0,0,3,39.4,0.3961,Factors Driving Commercial Success in the Luxury Perfume Market <> The Niche vs. Designer Divide: Differentiation and Market Positioning,0,1,empty_references
++64,7d7f3a472653dd66291be9c74d287398,How does remote work adoption affect innovation output and intra-firm knowledge diffusion in large technology firms?,Economy & Business,The Innovation Paradox: Analyzing the Impact of Remote Work on Knowledge Diffusion and Output in Large Technology Firms,0.75,4578,35130,7,4888.0,6090,0,136,41,41,0,0,4,29.71,0.476,"Quantifying the Impact: Innovation Metrics and Productivity Outcomes <> The Human Element: Employee Well-being, Culture, and Managerial Challenges",2,2,empty_references;high_redundancy_risk
++65,2fae852654d8673ed2135e62a8bebdc2,What economic mechanisms can incentivize carbon-intensive industries to transition to net-zero emissions without compromising competitiveness?,Economy & Business,"Economic Mechanisms for Industrial Net-Zero Transition: A Deep Dive into Incentives, Costs, and Competitiveness",0.5455,3382,27251,7,3247.0,4939,0,143,50,50,0,0,12,42.28,0.463,The Performance and Fiscal Reality of Carbon Pricing Mechanisms <> Comparative Analysis of Policy Instruments: A Framework for Effective Design,1,2,empty_references;high_redundancy_risk
++66,bbee1cb24c3315d1520485dd1ce9a5e1,How can large language models (LLMs) be effectively quantized and optimized?,Science & Technology,A Deep Dive into the Effective Quantization and Optimization of Large Language Models,0.4286,3862,29925,7,4196.0,4918,0,154,32,32,0,0,2,39.88,0.5146,Core Quantization Techniques: PTQ vs. QAT <> Synthesis: Strategic Considerations for Effective LLM Optimization,5,2,empty_references;high_redundancy_risk
++67,efa9fe603f31f662b880e61b910ba3f0,"The current research and industrialization status of solid-state lithium batteries, including their theoretical and practical advantages compared to traditional batteries, the main challenges faced in laboratory research and mass production, the estimated timeline for application, and other potential competing technologies.",Science & Technology,"A Deep-Dive Analysis of Solid-State Lithium Batteries: Technology, Challenges, and Commercialization Trajectory",0.6,3326,28643,7,3938.0,4166,0,184,54,54,0,0,5,55.32,0.3874,Theoretical and Practical Advantages Over Conventional Lithium-Ion Batteries <> Competing Advanced Battery Technologies and Strategic Implications,0,1,empty_references
++68,56ddf8f2ad0d5bef75e9e274a2d69a4a,"Study of a physical system: One end of a string is fixed to a pivot, and the pivot undergoes vertical simple harmonic vibration. Two identical small balls are suspended at each end of the string, and the system has two degrees of freedom: the angle of the string and the rotation angle of the small balls. Air resistance causing damping and the restitution coefficient of incomplete elastic deformation need to be considered. First, a general analysis of the system is carried out to predict the motion patterns, followed by model simplification and theoretical analysis for different phases of motion.",Science & Technology,A Deep Research Report on the Dynamics of a Vertically Excited Two-Ball String System,0.3696,2974,21671,6,3627.5,4116,0,74,29,29,0,0,2,24.88,0.539,General Analysis of Motion Patterns and System Coupling <> Model Simplification and Coordinate Transformation,2,2,empty_references;high_redundancy_risk
++69,dfc6e4a1c02b1398ba85e9b5e256facf,This study aims to analyze the economic contribution of the fisheries industry to the Gross Domestic Product (GDP) of Canada's Atlantic region and its role in sustaining the livelihoods of coastal communities. The research includes: (1) the direct and indirect employment impacts generated by the fisheries; (2) the role of ecological changes (such as fish population fluctuations and climate change) on economic stability; (3) the effects of government regulations and market changes on income and employment; (4) the economic diversification and adaptive strategies of fishing communities in response to challenges.,Economy & Business,Economic Contribution and Livelihoods of the Atlantic Canadian Fisheries Industry: A Comprehensive Analysis,0.2889,3168,24144,7,3488.0,4740,0,93,10,10,0,0,1,29.36,0.519,GDP Impact and Sectoral Profile of the Fisheries Industry <> Provincial Variations in Economic Contribution and Community Dependence,3,3,empty_references;low_citation_density;high_redundancy_risk
++70,4d436304f2f941b72f37cfd12e80f12c,What exactly American residents are consuming to achieve such a high consumption / GDP ratio?,Economy & Business,A Deep Dive into the Composition of U.S. Consumer Spending,0.1111,2415,18888,7,2588.0,3285,0,85,28,28,0,0,3,35.2,0.3836,"The Dominant Force of Services: Housing, Health, and Financials <> Synthesizing the Consumption Puzzle: A High-Ratio Economy Explained",0,2,empty_references;low_topic_heading_overlap
++71,6c12d8404a183c2b39aa08ba36788e24,Gain in-depth understanding of auction mechanisms and analyze how audiences and creatives operate. Explore how to more effectively reach target audiences through appropriate creative strategies.,Economy & Business,The Auction Imperative: A Deep Dive into Digital Advertising Mechanisms and Creative Strategy,0.25,3173,24596,7,3500.0,4090,0,110,36,36,0,0,5,34.67,0.561,The Creative Conundrum: Unpacking the ROI Impact of High-Quality Content <> The Symbiotic Relationship: How Creative and Audience Interact in the Auction,3,2,empty_references;high_redundancy_risk
++72,2c42d1efaf54bdb826b056bacc8bf1cc,"How can the principles of self-determination theory, particularly the promotion of autonomy, competence, and relatedness, be effectively integrated into teacher professional development programs to enhance the ability of elementary educators to design and implement culturally responsive reading instruction strategies, thereby stimulating the intrinsic motivation and reading engagement of students from low socioeconomic backgrounds?",Education,Integrating Self-Determination Theory into Teacher Professional Development for Culturally Responsive Reading Instruction,0.3824,3566,28213,7,3832.0,4714,0,115,39,39,0,0,5,32.25,0.5746,Theoretical Foundations: Aligning SDT with Culturally Responsive Teaching <> Implementing Culturally Responsive Reading Strategies Through an SDT Lens,5,2,empty_references;high_redundancy_risk
++73,d363d17a19d2aaf15a3522952f775a02,"Design a 7-day itinerary for Banff and the surrounding areas in Canada. On the first day, depart from Toronto to Calgary and stay one night in Calgary; the rest of the itinerary can be arranged freely.",Lifestyle,A Comprehensive 7-Day Itinerary for Banff and the Canadian Rockies,0.2353,4254,29274,10,2858.0,5048,0,190,20,20,0,0,0,44.66,0.5474,Day 1: Calgary Arrival and Transfer to Banff <> Transportation and Logistics,3,2,low_citation_density;high_redundancy_risk
++74,aeb65d64378cd31b365e8754588ead00,"from the perspective of developmental psychology (including stages of cognitive development (Piaget, Vygotsky), children's attention and memory), learning theory (including game-based learning, constructivism, meaningful learning), and attention and concentration (including techniques to improve attention retention, attention disorders (ADHD), methods to maintain motivation), study children's cognitive development and learning.",Education,A Comprehensive Analysis of Children's Cognitive Development and Learning,0.3704,3465,27830,7,3489.0,5998,0,170,47,47,0,0,3,49.06,0.4039,Foundations of Cognitive Development: Piaget vs. Vygotsky <> Synthesis and Future Directions,0,1,empty_references
++75,3452b674013188bc00a988ba11968917,"Analyze how virtual identities created in virtual worlds, games, and metaverse affect self-perception, behavioral patterns, and interpersonal relationships in real life.",Other,"The Metamorphosis of Self: A Deep Research Report on the Impact of Virtual Identities on Real-Life Perception, Behavior, and Relationships",0.4667,4382,33206,7,4482.0,5874,0,128,42,42,0,0,6,29.21,0.4853,The Anatomy of Connection: Redefining Interpersonal Relationships in the Metaverse <> The Contextual Lens: How Environment and Usage Shape Virtual Identity,5,2,empty_references;high_redundancy_risk
++76,c968e68981827ddc34a8fc28e04afc19,"Real gas models beyond the Van der Waals model, detailed explanation of their historical background, derivation process, theoretical rationality, and limitations.",Science & Technology,"A Deep Dive into Post-Van der Waals Real Gas Models: Historical Development, Theoretical Frameworks, and Limitations",0.5294,3780,27622,7,4054.0,5046,0,127,15,15,0,0,0,33.6,0.5425,The Redlich-Kwong Equation: An Empirical Leap Forward in Predictive Accuracy <> Comparative Analysis of Key Limitations and Scope of Applicability,5,2,low_citation_density;high_redundancy_risk
++77,8fb0ce396eb1b297f8f478beeba3ff0b,What are the similarities and differences between the political and legal systems of the Roman Empire and the Eastern Roman Empire?,Politics & Society,A Comparative Analysis of the Roman and Eastern Roman (Byzantine) Political and Legal Systems,0.625,3260,23814,6,3680.5,4866,0,146,38,38,0,0,5,44.79,0.5535,Governance Structures: From Republican Balance to Imperial Autocracy <> The Decline and Legacy of the Roman Senate,3,2,empty_references;high_redundancy_risk
++78,92df042f6657d9e9d92b0cddd34eb6ff,"Analysis of the impact of quantum computing on traditional encryption and antivirus techniques and corresponding countermeasures, including the basic principles of quantum computing, the impact of quantum computing on traditional encryption technologies, the role of antivirus software in resisting quantum computing, how antivirus software addresses encryption and decryption issues brought by quantum computing, as well as viruses and trojans empowered by quantum computing.",Science & Technology,A Deep Research Report on the Impact of Quantum Computing on Cybersecurity,0.36,4037,32786,7,4383.0,5591,0,244,57,57,0,0,4,60.44,0.5832,Foundational Principles of Quantum Computing and Cryptography <> The Quantum Threat: Breaking Traditional Encryption and Data Harvesting,1,2,empty_references;high_redundancy_risk
++79,7901a7cf7d81606687062ffff51f8b27,"Provide information about refractory materials in the iron and steel manufacturing industry, including their types, chemical composition, relevant compliance standards, importance, testing standards, key performance indicators, their reaction with different molten steel chemical compositions, and relevant content that helps understand and evaluate their quality and suitability for different applications.",Science & Technology,A Comprehensive Research Report on Refractory Materials in the Iron and Steel Industry,0.4839,3384,26430,7,3734.0,4917,0,122,34,34,0,0,4,36.05,0.5275,Key Performance Indicators and Testing Methodologies <> Compliance Standards and Quality Assurance Framework,2,2,empty_references;high_redundancy_risk
++80,4c96a8da58fecae33588fda2eab7ac41,"Study the survival status, inheritance patterns, and innovative development of traditional handicrafts worldwide under the impact of globalization and industrialization, analyzing effective strategies for cultural heritage protection.",History & Culture,"The Global State of Traditional Handicrafts: Navigating Survival, Innovation, and Protection in the 21st Century",0.5789,3630,29147,7,4000.0,5426,0,118,35,35,0,0,0,32.51,0.3688,Innovative Development and Revitalization Strategies <> Synthesis and Future Outlook: A Path Forward for Intangible Heritage,0,0,
++81,342ca5faa3e47bdf458f0d74373c4e25,Analyze the causes of occupational burnout syndrome among teachers and healthcare workers.,Health & Medicine,A Comparative Analysis of Occupational Burnout in Teachers and Healthcare Workers,0.5556,3291,26583,7,3067.0,4322,0,151,56,56,0,0,6,45.88,0.4575,Organizational Support as a Critical Buffer Against Burnout <> Comparative Analysis of Key Risk and Resilience Factors,1,2,empty_references;high_redundancy_risk
++82,88396eaa4b7b9a539cf93a591b3e47f4,How to prevent and treat eczema through diet and exercise,Health & Medicine,A Comprehensive Research Report on the Prevention and Treatment of Eczema through Diet and Exercise,0.6,4733,36597,7,5146.0,6867,0,209,58,58,0,0,5,44.16,0.454,"Dietary Strategies for Eczema Prevention: The Role of Nutrition in Prenatal and Early Life <> Nutritional Supplements for Symptom Reduction: Efficacy of Omega-3, Probiotics, and Vitamin D",2,3,empty_references;very_long_section;high_redundancy_risk
++83,3a847bda2d7ddcbf6f4c8c9b036637e4,How does early bilingual education affect children's development compared to monolingual instruction?,Education,A Comparative Analysis of Bilingual and Monolingual Education on Child Development,0.4444,3238,25650,7,3417.0,4653,0,113,35,35,0,0,4,34.9,0.5599,Linguistic and Metalinguistic Development in Bilingual vs. Monolingual Environments <> Challenges and Misconceptions in Bilingual Development,5,2,empty_references;high_redundancy_risk
++84,dda1ed087a367ff0c2d021f42da5666c,"Small startup teams with limited budgets need an all-in-one TV that can be used for meetings and also serve as a display for promotion, suitable for placement at the reception desk, next to products, or beside storefront windows. What are the available options?",Economy & Business,A Comprehensive Analysis of All-in-One Displays for Startup Reception and Promotion,0.2174,3840,29303,7,4136.0,4900,0,152,38,38,0,0,0,39.58,0.4796,Comparative Analysis of Budget-Friendly Commercial Display Solutions <> Strategic Recommendations Based on Budget and Usage Scenarios,3,1,high_redundancy_risk
++85,26a9c12765440aacb87b887cc9aaebc6,"Explore how rising temperatures, precipitation changes, and increased CO₂ concentrations affect the nutrient uptake patterns of leguminous plants such as chickpeas.",Environment & Nature,The Impact of Climate Change on the Nutrient Uptake of Chickpea (*Cicer arietinum*),0.2857,3400,27058,7,3689.0,4547,0,161,55,55,0,0,5,47.35,0.4796,Temperature Stress: The Complex and Contradictory Influence on Chickpea Nutrition <> Genotypic Diversity as a Key Determinant of Nutritional Resilience,2,2,empty_references;high_redundancy_risk
++86,bb5c38dfaa5a209ca12fc3b805a28c6c,"In the electric vehicle (EV) industry chain, how does a price shock in upstream lithium mining propagate through the value chain to affect the gross profit margins of automakers?",Economy & Business,The Propagation of Lithium Price Shocks Through the Electric Vehicle Value Chain,0.5,3815,28542,7,3854.0,4738,0,98,32,32,0,0,5,25.69,0.5015,The Magnitude of the Shock: Analyzing the 2022-2024 Lithium Price Collapse <> Future Outlook: Navigating Persistent Volatility and Emerging Technologies,2,2,empty_references;high_redundancy_risk
++87,80f2fb80943ce89115db20f6db3dcd0d,"Research modern direct-to-consumer brands launched during or after 2020 and their strategies, analyze and provide practical and immediately applicable digital marketing strategies, including real-world case studies.",Economy & Business,"Modern Direct-to-Consumer Marketing: Strategies, Tactics, and Case Studies from 2020 to Present",0.3529,3263,25970,7,3339.0,4519,0,82,32,32,0,0,1,25.13,0.359,TikTok Dominance: A Blueprint for Virality and Community Engagement <> Strategic Channel Diversification: Performance and Brand Marketing Converge,0,1,empty_references
++88,759a2c7fa57aa17e7b85899e46b28f67,"What is the secret of the Bermuda Triangle and the reason for its mystery? Analyze the unique current systems, magnetic anomalies, and meteorological conditions in this sea area.",Environment & Nature,"A Comprehensive Analysis of the Bermuda Triangle: Current Systems, Magnetic Anomalies, and Meteorological Conditions",0.5333,3166,22785,6,3822.0,4937,0,125,14,14,0,0,0,39.48,0.5466,Meteorological Marvels: From Hexagonal Clouds to Rogue Waves <> Synthesis of Natural Forces and the Resolution of the Legend,3,2,low_citation_density;high_redundancy_risk
++89,0952c6629f8ad0781564728c2fe17ebe,"What mature methods are available for product managers to learn AI knowledge? What experiences have well-known AI product leaders or CEOs (such as OpenAI, MidJourney, Claude, Heygen, Manus, etc.) shared in terms of uncovering user needs and creating excellent AI product methodologies?",Science & Technology,A Deep Dive into AI Product Methodologies and Leadership,0.08,3242,24872,7,3236.0,5084,0,90,22,22,0,0,1,27.76,0.3438,"Foundational Frameworks for AI Product Strategy <> Building Defensible AI Products: Moats, Differentiation, and Data Compounding",0,3,empty_references;low_citation_density;low_topic_heading_overlap
++90,87e12ff54efc6704422deb3cbfe149e6,Report on the Impact of Undiagnosed Generalized Anxiety Disorder on Children's Learning,Education,The Impact of Undiagnosed Generalized Anxiety Disorder on Children's Learning,1.0,4379,33877,7,4991.0,5309,0,169,49,49,0,0,0,38.59,0.5031,Prevalence and Recognition: The Unseen Epidemic in Schools <> Pathways to Mitigation and Future Directions,4,1,high_redundancy_risk
++91,ced7eb984a34a2bb986f1e1d745b15fc,Summarize recent research progress on reinforcement learning in the use of tools by LLMs.,Science & Technology,A Deep Dive into Recent Research on Reinforcement Learning for Tool-Use in Large Language Models,0.4444,3758,29260,7,4055.0,4985,0,116,34,34,0,0,2,30.87,0.4949,Advanced Training Methodologies and Reward Shaping Techniques <> The Rise of Pure Reinforcement Learning Paradigms,1,2,empty_references;high_redundancy_risk
++92,93478238be56d5870ce7f450e0435a04,Market Research on Furniture for Small Apartments in Hong Kong and Analysis of Market Entry Strategies,Economy & Business,Deep Research Report: The Hong Kong Small Apartment Furniture Market and Strategic Entry Pathways,0.7,4111,32365,7,4356.0,6165,0,144,42,42,0,0,6,35.03,0.4522,Case Study: Belffin - A Model for Success in the Digital Era <> Strategic Framework for Market Entry and Growth,2,2,empty_references;high_redundancy_risk
++93,e1ebba00d8ca685f29311ae86fd4f9c9,"How to build a gamified system for mathematics teaching, focusing on the alignment of knowledge graphs and game skill trees, and secondly, studying the learning difficulty curve in games. Analyze the reasons why games are engaging while learning is comparatively less so, and how high-difficulty games (such as 'Dark Souls') manage to keep players continuously engaged.",Education,"A Research Report on Building Gamified Mathematics Systems: Aligning Knowledge Graphs, Skill Trees, and Learning Curves",0.3548,3758,28294,7,4343.0,4804,0,88,29,29,0,0,2,23.42,0.4552,From Theory to Practice: Designing Effective Gamified Math Interventions <> Synthesizing the Framework: A Holistic Approach to Gamified Mathematics Education,1,3,empty_references;low_citation_density;high_redundancy_risk
++94,e598691ed1d572baeb6b3da049d4dba1,"Develop a framework or summary of economic turning points and their driving factors, including leading and lagging indicators.",Economy & Business,"A Framework for Economic Turning Points: Drivers, Indicators, and Structural Shifts",0.5833,3196,24374,7,3202.0,4777,0,120,39,39,0,0,2,37.55,0.407,Defining Economic Turning Points and the National Bureau of Economic Research's Role <> The Lagging Nature of Economic Indicators and Their Post-Turning Point Behavior,0,1,empty_references
++95,e2224f2a6437f59adf3ffd84b43ecb63,"How can the education sector apply artificial intelligence technology in enterprises, which groups benefit, and in what specific ways do they benefit?",Education,"The Enterprise Application of Artificial Intelligence in Education: A Comprehensive Analysis of Implementation, Beneficiaries, and Impact",0.6364,4162,32275,7,4670.0,6905,0,137,24,24,0,0,3,32.92,0.5303,Key Beneficiary Groups and Their Specific Advantages <> Mechanisms of Benefit: How AI Delivers Value to Educators,3,4,empty_references;very_long_section;low_citation_density;high_redundancy_risk
++96,e97987bfd6ca4d44e677e843fb6cb0f2,Create a market research report on global AI cloud computing power market.,Economy & Business,A Deep Dive into the Global AI Cloud Computing Power Market,0.75,4625,35549,7,5134.0,6088,0,145,39,39,0,0,3,31.35,0.4558,"Market Size, Growth Projections, and Economic Impact <> Regional Dynamics and Geopolitical Influences",2,2,empty_references;high_redundancy_risk
++97,89ac2f80ab884a65e75c71020d9b8f03,Research the ethical issues and governance strategies in the application of artificial intelligence in education.,Education,The Ethical Imperative and Governance of Artificial Intelligence in Education,0.6667,3992,32295,7,4372.0,5602,0,165,45,45,0,0,0,41.33,0.4318,Implementing Effective Governance: Strategies and Institutional Roles <> Synthesis and Future Outlook: Charting a Course for Ethical Integration,2,1,high_redundancy_risk
++98,58bc0467f752dd02c94d3952d53a0bd1,"Investigate whether Yordles in League of Legends truly die when they suffer fatal damage, i.e., whether Yordles possess immortality characteristics, and if immortality does exist, what its specific mechanism of operation is.",Other,The Nature of Yordle Mortality: An Analysis of Immortality and Resurrection in Runeterra,0.1765,3016,20752,7,2785.0,4262,0,126,27,27,0,0,1,41.78,0.5562,The Resurrection Hypothesis: Evidence for a Return Mechanism <> Bandle City: The Nexus of Yordle Life and Resurrection,5,3,empty_references;high_redundancy_risk;low_topic_heading_overlap
++99,d21b10927c10da0570975ee3a2a7156e,Analyze the practice-oriented activities of communicative general learning activities for students in the basic education stage based on the collective academic dialogue techniques of literature reading classes.,Education,Practice-Oriented Activities in Literature-Based Dialogic Education: A Deep Dive into Collective Academic Dialogue,0.5,3288,25717,7,3717.0,4984,0,98,26,26,0,0,0,29.81,0.4203,Implementation Challenges and Strategies for Effective Adoption <> Synthesis and Implications for Student-Centered Literature Education,1,2,low_citation_density;high_redundancy_risk
++100,8dbdf81bed6ef074bd81f7cbeb0f4201,"The study examines the working mechanism of lithium cobalt oxide as the cathode in lithium-ion batteries, with graphite as the anode and lithium hexafluorophosphate as the electrolyte.",Science & Technology,A Deep Research Report on the Operational Mechanisms of LiCoO₂ Cathodes and Graphite Anodes in LiPF₆-Based Lithium-Ion Batteries,0.5,3594,27148,7,3456.0,4731,0,103,32,32,0,0,0,28.66,0.4999,The Critical Role of the Solid Electrolyte Interphase (SEI) <> Mitigation Strategies and Advanced Materials for Enhanced Stability,3,1,high_redundancy_risk
+diff --git a/example/report_corpus_audit/report_audit_summary.json b/example/report_corpus_audit/report_audit_summary.json
+new file mode 100644
+index 0000000..68ce9c1
+--- /dev/null
++++ b/example/report_corpus_audit/report_audit_summary.json
+@@ -0,0 +1,639 @@
++{
++  "generated_at": "2026-05-04T15:13:55.466790+00:00",
++  "input_path": "data/report/qwen-reports.jsonl",
++  "topic_path": "data/topic/high_quality_topics.jsonl",
++  "report_count": 100,
++  "redundancy_threshold": 0.42,
++  "corpus_summary": {
++    "avg_words": 3633.97,
++    "median_words": 3620.0,
++    "avg_sections": 6.94,
++    "avg_citations": 123.98,
++    "reports_with_dangling_citations": 0,
++    "reports_with_empty_references": 79,
++    "reports_with_high_redundancy_risk": 82,
++    "reports_with_low_topic_heading_overlap": 8,
++    "reports_with_zero_topic_heading_overlap": 1,
++    "max_top_redundancy_risk": 0.7407
++  },
++  "category_summary": [
++    {
++      "category": "Art, Music & Literature",
++      "count": 7,
++      "avg_words": 3585.57,
++      "avg_sections": 7,
++      "avg_citations": 124,
++      "avg_top_redundancy_risk": 0.4407,
++      "avg_topic_keyword_coverage": 0.4517,
++      "avg_audit_risk_score": 1.71
++    },
++    {
++      "category": "Economy & Business",
++      "count": 16,
++      "avg_words": 3625.69,
++      "avg_sections": 7,
++      "avg_citations": 118.62,
++      "avg_top_redundancy_risk": 0.4715,
++      "avg_topic_keyword_coverage": 0.4309,
++      "avg_audit_risk_score": 1.94
++    },
++    {
++      "category": "Education",
++      "count": 8,
++      "avg_words": 3731,
++      "avg_sections": 7,
++      "avg_citations": 131.88,
++      "avg_top_redundancy_risk": 0.4849,
++      "avg_topic_keyword_coverage": 0.5444,
++      "avg_audit_risk_score": 2
++    },
++    {
++      "category": "Entertainment & Fashion",
++      "count": 5,
++      "avg_words": 3262.8,
++      "avg_sections": 7,
++      "avg_citations": 106,
++      "avg_top_redundancy_risk": 0.5074,
++      "avg_topic_keyword_coverage": 0.2347,
++      "avg_audit_risk_score": 2.8
++    },
++    {
++      "category": "Environment & Nature",
++      "count": 2,
++      "avg_words": 3283,
++      "avg_sections": 6.5,
++      "avg_citations": 143,
++      "avg_top_redundancy_risk": 0.5131,
++      "avg_topic_keyword_coverage": 0.4095,
++      "avg_audit_risk_score": 2
++    },
++    {
++      "category": "Health & Medicine",
++      "count": 10,
++      "avg_words": 3674.2,
++      "avg_sections": 6.5,
++      "avg_citations": 130.4,
++      "avg_top_redundancy_risk": 0.43,
++      "avg_topic_keyword_coverage": 0.4918,
++      "avg_audit_risk_score": 2.3
++    },
++    {
++      "category": "History & Culture",
++      "count": 5,
++      "avg_words": 3593,
++      "avg_sections": 7.4,
++      "avg_citations": 115.6,
++      "avg_top_redundancy_risk": 0.4349,
++      "avg_topic_keyword_coverage": 0.3776,
++      "avg_audit_risk_score": 1.6
++    },
++    {
++      "category": "Lifestyle",
++      "count": 1,
++      "avg_words": 4254,
++      "avg_sections": 10,
++      "avg_citations": 190,
++      "avg_top_redundancy_risk": 0.5474,
++      "avg_topic_keyword_coverage": 0.2353,
++      "avg_audit_risk_score": 2
++    },
++    {
++      "category": "Other",
++      "count": 2,
++      "avg_words": 3699,
++      "avg_sections": 7,
++      "avg_citations": 127,
++      "avg_top_redundancy_risk": 0.5208,
++      "avg_topic_keyword_coverage": 0.3216,
++      "avg_audit_risk_score": 2.5
++    },
++    {
++      "category": "Politics & Society",
++      "count": 5,
++      "avg_words": 3701.4,
++      "avg_sections": 6.8,
++      "avg_citations": 117,
++      "avg_top_redundancy_risk": 0.522,
++      "avg_topic_keyword_coverage": 0.6183,
++      "avg_audit_risk_score": 2.6
++    },
++    {
++      "category": "Science & Technology",
++      "count": 37,
++      "avg_words": 3655.27,
++      "avg_sections": 6.89,
++      "avg_citations": 123.57,
++      "avg_top_redundancy_risk": 0.496,
++      "avg_topic_keyword_coverage": 0.4541,
++      "avg_audit_risk_score": 2.16
++    },
++    {
++      "category": "Sports & Fitness",
++      "count": 2,
++      "avg_words": 3724,
++      "avg_sections": 7,
++      "avg_citations": 139,
++      "avg_top_redundancy_risk": 0.6208,
++      "avg_topic_keyword_coverage": 0.4658,
++      "avg_audit_risk_score": 3
++    }
++  ],
++  "top_risk_reports": [
++    {
++      "index": 53,
++      "file_id": "d8023eeb2b82aa1398600213616731e5",
++      "topic": "Research all currency information in all the 'The Legend of Heroes' series.",
++      "category": "Entertainment & Fashion",
++      "report_title": "An Economic Deep Dive into the Currency of Zemuria",
++      "topic_keyword_coverage": 0.1667,
++      "word_count": 3333,
++      "char_count": 23295,
++      "section_count": 7,
++      "median_section_chars": 3103.0,
++      "max_section_chars": 4255,
++      "table_lines": 0,
++      "citation_count": 85,
++      "unique_citations": 16,
++      "reference_count": 16,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 4,
++      "citation_density_per_1000_words": 25.5,
++      "top_redundancy_risk": 0.5737,
++      "top_redundancy_pair": "The Mira: A Universal Currency Across Zemuria <> Economic Stability and the Mechanics of Value",
++      "high_redundancy_pair_count": 1,
++      "audit_risk_score": 4,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap"
++    },
++    {
++      "index": 95,
++      "file_id": "e2224f2a6437f59adf3ffd84b43ecb63",
++      "topic": "How can the education sector apply artificial intelligence technology in enterprises, which groups benefit, and in what specific ways do they benefit?",
++      "category": "Education",
++      "report_title": "The Enterprise Application of Artificial Intelligence in Education: A Comprehensive Analysis of Implementation, Beneficiaries, and Impact",
++      "topic_keyword_coverage": 0.6364,
++      "word_count": 4162,
++      "char_count": 32275,
++      "section_count": 7,
++      "median_section_chars": 4670.0,
++      "max_section_chars": 6905,
++      "table_lines": 0,
++      "citation_count": 137,
++      "unique_citations": 24,
++      "reference_count": 24,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 3,
++      "citation_density_per_1000_words": 32.92,
++      "top_redundancy_risk": 0.5303,
++      "top_redundancy_pair": "Key Beneficiary Groups and Their Specific Advantages <> Mechanisms of Benefit: How AI Delivers Value to Educators",
++      "high_redundancy_pair_count": 3,
++      "audit_risk_score": 4,
++      "flags": "empty_references;very_long_section;low_citation_density;high_redundancy_risk"
++    },
++    {
++      "index": 59,
++      "file_id": "b13d1996af05bb265fd3954652ec9854",
++      "topic": "Since the construction of the wind tunnel, McLaren F1 team's aerodynamic design level has continuously improved. Why has such a significant breakthrough been achieved in just a few years? By the F1 races up to 2025, McLaren cars have demonstrated a clear advantage compared to other teams, even surpassing the competitiveness of Red Bull Racing's Max Verstappen in his Red Bull car. Analyze the reasons for McLaren's success and its advantages in specific aspects.",
++      "category": "Sports & Fitness",
++      "report_title": "A Deep Dive into McLaren's 2025 Formula 1 Dominance",
++      "topic_keyword_coverage": 0.1538,
++      "word_count": 3758,
++      "char_count": 27953,
++      "section_count": 7,
++      "median_section_chars": 3871.0,
++      "max_section_chars": 5468,
++      "table_lines": 0,
++      "citation_count": 132,
++      "unique_citations": 26,
++      "reference_count": 26,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 4,
++      "citation_density_per_1000_words": 35.13,
++      "top_redundancy_risk": 0.5008,
++      "top_redundancy_pair": "The Core of Success: Aerodynamic Superiority and Balance <> Comparative Analysis: The Chasm with Red Bull Racing",
++      "high_redundancy_pair_count": 5,
++      "audit_risk_score": 4,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap"
++    },
++    {
++      "index": 46,
++      "file_id": "e0fc3229bf9f338d7166ea519c1e231a",
++      "topic": "Conduct a comprehensive analysis of all the films directed by Feng Xiaogang, evaluate the overall quality and level of his works, and provide a complete ranking along with detailed reasons and analysis.",
++      "category": "Art, Music & Literature",
++      "report_title": "A Comprehensive Analysis of the Cinematic Works of Feng Xiaogang",
++      "topic_keyword_coverage": 0.3889,
++      "word_count": 3750,
++      "char_count": 26835,
++      "section_count": 7,
++      "median_section_chars": 3538.0,
++      "max_section_chars": 6974,
++      "table_lines": 0,
++      "citation_count": 99,
++      "unique_citations": 24,
++      "reference_count": 24,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 2,
++      "citation_density_per_1000_words": 26.4,
++      "top_redundancy_risk": 0.4535,
++      "top_redundancy_pair": "The Peak of Critical Acclaim: International Recognition and Artistic Mastery <> A Final Ranking: Evaluating the Complete Filmography",
++      "high_redundancy_pair_count": 2,
++      "audit_risk_score": 4,
++      "flags": "empty_references;very_long_section;low_citation_density;high_redundancy_risk"
++    },
++    {
++      "index": 30,
++      "file_id": "dd6fe963bd0fe54b3ace6b38e4057f4e",
++      "topic": "LDL performs multiple functions in the human body. Some suggest that excessively lowering its levels might have adverse effects on health. Moreover, research indicates that elderly individuals with higher LDL or total cholesterol levels tend to have lower overall mortality rates. Further investigation into issues related to this LDL level is desired.",
++      "category": "Health & Medicine",
++      "report_title": "A Comprehensive Analysis of LDL Cholesterol Levels: Balancing Cardiovascular Risk and Potential Adverse Effects",
++      "topic_keyword_coverage": 0.1562,
++      "word_count": 2821,
++      "char_count": 20902,
++      "section_count": 1,
++      "median_section_chars": 19065.0,
++      "max_section_chars": 19065,
++      "table_lines": 0,
++      "citation_count": 84,
++      "unique_citations": 29,
++      "reference_count": 29,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 3,
++      "citation_density_per_1000_words": 29.78,
++      "top_redundancy_risk": 0.0,
++      "top_redundancy_pair": "",
++      "high_redundancy_pair_count": 0,
++      "audit_risk_score": 4,
++      "flags": "empty_references;few_sections;very_long_section;low_topic_heading_overlap"
++    },
++    {
++      "index": 20,
++      "file_id": "89dc1620ca09e6bf1e6697f5cae0a0f2",
++      "topic": "Detailed analysis of the typing speed of various Chinese character input methods, including Double Pinyin, Wubi, and Pinyin.",
++      "category": "Science & Technology",
++      "report_title": "A Comparative Analysis of Typing Speeds and Performance in Chinese Character Input Methods",
++      "topic_keyword_coverage": 0.4615,
++      "word_count": 3481,
++      "char_count": 24982,
++      "section_count": 7,
++      "median_section_chars": 3716.0,
++      "max_section_chars": 4447,
++      "table_lines": 0,
++      "citation_count": 88,
++      "unique_citations": 24,
++      "reference_count": 24,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 9,
++      "citation_density_per_1000_words": 25.28,
++      "top_redundancy_risk": 0.6395,
++      "top_redundancy_pair": "Quantitative Comparison of Input Method Speeds <> The Role of Normalization and Alternative Measurement Metrics",
++      "high_redundancy_pair_count": 5,
++      "audit_risk_score": 3,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk"
++    },
++    {
++      "index": 62,
++      "file_id": "4cb4c0302d43a1ea01f6863e372e473b",
++      "topic": "As the primary meat source for cat food, compared to chicken, goose, duck, and rabbit meat, what are the specific differences and advantages of pigeon meat in meeting the nutritional needs of cats? Please provide a detailed comparison and analyze how these advantages affect sales.",
++      "category": "Economy & Business",
++      "report_title": "A Comparative Analysis of Pigeon Meat as a Nutritional Ingredient in Cat Food",
++      "topic_keyword_coverage": 0.24,
++      "word_count": 3112,
++      "char_count": 22514,
++      "section_count": 7,
++      "median_section_chars": 3269.0,
++      "max_section_chars": 4077,
++      "table_lines": 0,
++      "citation_count": 87,
++      "unique_citations": 17,
++      "reference_count": 17,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 3,
++      "citation_density_per_1000_words": 27.96,
++      "top_redundancy_risk": 0.6173,
++      "top_redundancy_pair": "Market Positioning and Consumer Perception of Novel Proteins <> Strategic Implications for Cat Food Formulation and Sales",
++      "high_redundancy_pair_count": 5,
++      "audit_risk_score": 3,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk"
++    },
++    {
++      "index": 24,
++      "file_id": "04f3d7f132ef0458d150dc9930d1d444",
++      "topic": "A comprehensive review of biochar preparation processes and characterization techniques. Study biochar preparation methods, structural properties, and performance evaluation in various application fields, analyzing the principles and application scope of commonly used characterization techniques.",
++      "category": "Science & Technology",
++      "report_title": "A Comprehensive Review of Biochar Preparation, Characterization, and Application",
++      "topic_keyword_coverage": 0.5714,
++      "word_count": 4336,
++      "char_count": 32456,
++      "section_count": 7,
++      "median_section_chars": 4783.0,
++      "max_section_chars": 5260,
++      "table_lines": 0,
++      "citation_count": 146,
++      "unique_citations": 19,
++      "reference_count": 19,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 1,
++      "citation_density_per_1000_words": 33.67,
++      "top_redundancy_risk": 0.5713,
++      "top_redundancy_pair": "Structural Properties and Performance Correlation <> Application in Soil Amendment and Wastewater Treatment",
++      "high_redundancy_pair_count": 5,
++      "audit_risk_score": 3,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk"
++    },
++    {
++      "index": 38,
++      "file_id": "1b4c3d894af70868f1a1ca62edc4b2a7",
++      "topic": "The Role and Powers of the Court in the Pretrial Stage of Criminal Proceedings",
++      "category": "Politics & Society",
++      "report_title": "The Role and Powers of the Court in the Pretrial Stage of Criminal Proceedings",
++      "topic_keyword_coverage": 1.0,
++      "word_count": 4429,
++      "char_count": 30877,
++      "section_count": 7,
++      "median_section_chars": 4341.0,
++      "max_section_chars": 5987,
++      "table_lines": 0,
++      "citation_count": 102,
++      "unique_citations": 23,
++      "reference_count": 23,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 2,
++      "citation_density_per_1000_words": 23.03,
++      "top_redundancy_risk": 0.5611,
++      "top_redundancy_pair": "Gatekeeper Over Evidence: Rulings on Suppression and Admissibility <> Resolving Legal Disputes: The Court's Authority Over Pretrial Motions",
++      "high_redundancy_pair_count": 4,
++      "audit_risk_score": 3,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk"
++    },
++    {
++      "index": 98,
++      "file_id": "58bc0467f752dd02c94d3952d53a0bd1",
++      "topic": "Investigate whether Yordles in League of Legends truly die when they suffer fatal damage, i.e., whether Yordles possess immortality characteristics, and if immortality does exist, what its specific mechanism of operation is.",
++      "category": "Other",
++      "report_title": "The Nature of Yordle Mortality: An Analysis of Immortality and Resurrection in Runeterra",
++      "topic_keyword_coverage": 0.1765,
++      "word_count": 3016,
++      "char_count": 20752,
++      "section_count": 7,
++      "median_section_chars": 2785.0,
++      "max_section_chars": 4262,
++      "table_lines": 0,
++      "citation_count": 126,
++      "unique_citations": 27,
++      "reference_count": 27,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 1,
++      "citation_density_per_1000_words": 41.78,
++      "top_redundancy_risk": 0.5562,
++      "top_redundancy_pair": "The Resurrection Hypothesis: Evidence for a Return Mechanism <> Bandle City: The Nexus of Yordle Life and Resurrection",
++      "high_redundancy_pair_count": 5,
++      "audit_risk_score": 3,
++      "flags": "empty_references;high_redundancy_risk;low_topic_heading_overlap"
++    }
++  ],
++  "low_topic_overlap_reports": [
++    {
++      "index": 8,
++      "file_id": "cc3fd893a5fc8b14c66ea570e289d4ae",
++      "topic": "Write a review on the role of cytochrome complexes in the initial reactions of photosynthesis.",
++      "category": "Science & Technology",
++      "report_title": "A Comparative Analysis of Tesla and BYD: The Battery and Charging Frontiers",
++      "topic_keyword_coverage": 0.0,
++      "word_count": 4487,
++      "char_count": 33756,
++      "section_count": 7,
++      "median_section_chars": 4803.0,
++      "max_section_chars": 5391,
++      "table_lines": 0,
++      "citation_count": 132,
++      "unique_citations": 36,
++      "reference_count": 36,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 3,
++      "citation_density_per_1000_words": 29.42,
++      "top_redundancy_risk": 0.4635,
++      "top_redundancy_pair": "The Race for Charging Supremacy: Supercharger Networks and Fast-Charging Infrastructure <> Global Market Position and Strategic Expansion",
++      "high_redundancy_pair_count": 3,
++      "audit_risk_score": 3,
++      "flags": "empty_references;high_redundancy_risk;zero_topic_heading_overlap"
++    },
++    {
++      "index": 89,
++      "file_id": "0952c6629f8ad0781564728c2fe17ebe",
++      "topic": "What mature methods are available for product managers to learn AI knowledge? What experiences have well-known AI product leaders or CEOs (such as OpenAI, MidJourney, Claude, Heygen, Manus, etc.) shared in terms of uncovering user needs and creating excellent AI product methodologies?",
++      "category": "Science & Technology",
++      "report_title": "A Deep Dive into AI Product Methodologies and Leadership",
++      "topic_keyword_coverage": 0.08,
++      "word_count": 3242,
++      "char_count": 24872,
++      "section_count": 7,
++      "median_section_chars": 3236.0,
++      "max_section_chars": 5084,
++      "table_lines": 0,
++      "citation_count": 90,
++      "unique_citations": 22,
++      "reference_count": 22,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 1,
++      "citation_density_per_1000_words": 27.76,
++      "top_redundancy_risk": 0.3438,
++      "top_redundancy_pair": "Foundational Frameworks for AI Product Strategy <> Building Defensible AI Products: Moats, Differentiation, and Data Compounding",
++      "high_redundancy_pair_count": 0,
++      "audit_risk_score": 3,
++      "flags": "empty_references;low_citation_density;low_topic_heading_overlap"
++    },
++    {
++      "index": 70,
++      "file_id": "4d436304f2f941b72f37cfd12e80f12c",
++      "topic": "What exactly American residents are consuming to achieve such a high consumption / GDP ratio?",
++      "category": "Economy & Business",
++      "report_title": "A Deep Dive into the Composition of U.S. Consumer Spending",
++      "topic_keyword_coverage": 0.1111,
++      "word_count": 2415,
++      "char_count": 18888,
++      "section_count": 7,
++      "median_section_chars": 2588.0,
++      "max_section_chars": 3285,
++      "table_lines": 0,
++      "citation_count": 85,
++      "unique_citations": 28,
++      "reference_count": 28,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 3,
++      "citation_density_per_1000_words": 35.2,
++      "top_redundancy_risk": 0.3836,
++      "top_redundancy_pair": "The Dominant Force of Services: Housing, Health, and Financials <> Synthesizing the Consumption Puzzle: A High-Ratio Economy Explained",
++      "high_redundancy_pair_count": 0,
++      "audit_risk_score": 2,
++      "flags": "empty_references;low_topic_heading_overlap"
++    },
++    {
++      "index": 59,
++      "file_id": "b13d1996af05bb265fd3954652ec9854",
++      "topic": "Since the construction of the wind tunnel, McLaren F1 team's aerodynamic design level has continuously improved. Why has such a significant breakthrough been achieved in just a few years? By the F1 races up to 2025, McLaren cars have demonstrated a clear advantage compared to other teams, even surpassing the competitiveness of Red Bull Racing's Max Verstappen in his Red Bull car. Analyze the reasons for McLaren's success and its advantages in specific aspects.",
++      "category": "Sports & Fitness",
++      "report_title": "A Deep Dive into McLaren's 2025 Formula 1 Dominance",
++      "topic_keyword_coverage": 0.1538,
++      "word_count": 3758,
++      "char_count": 27953,
++      "section_count": 7,
++      "median_section_chars": 3871.0,
++      "max_section_chars": 5468,
++      "table_lines": 0,
++      "citation_count": 132,
++      "unique_citations": 26,
++      "reference_count": 26,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 4,
++      "citation_density_per_1000_words": 35.13,
++      "top_redundancy_risk": 0.5008,
++      "top_redundancy_pair": "The Core of Success: Aerodynamic Superiority and Balance <> Comparative Analysis: The Chasm with Red Bull Racing",
++      "high_redundancy_pair_count": 5,
++      "audit_risk_score": 4,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap"
++    },
++    {
++      "index": 30,
++      "file_id": "dd6fe963bd0fe54b3ace6b38e4057f4e",
++      "topic": "LDL performs multiple functions in the human body. Some suggest that excessively lowering its levels might have adverse effects on health. Moreover, research indicates that elderly individuals with higher LDL or total cholesterol levels tend to have lower overall mortality rates. Further investigation into issues related to this LDL level is desired.",
++      "category": "Health & Medicine",
++      "report_title": "A Comprehensive Analysis of LDL Cholesterol Levels: Balancing Cardiovascular Risk and Potential Adverse Effects",
++      "topic_keyword_coverage": 0.1562,
++      "word_count": 2821,
++      "char_count": 20902,
++      "section_count": 1,
++      "median_section_chars": 19065.0,
++      "max_section_chars": 19065,
++      "table_lines": 0,
++      "citation_count": 84,
++      "unique_citations": 29,
++      "reference_count": 29,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 3,
++      "citation_density_per_1000_words": 29.78,
++      "top_redundancy_risk": 0.0,
++      "top_redundancy_pair": "",
++      "high_redundancy_pair_count": 0,
++      "audit_risk_score": 4,
++      "flags": "empty_references;few_sections;very_long_section;low_topic_heading_overlap"
++    },
++    {
++      "index": 44,
++      "file_id": "229912b72fda25fb118ede0b3ff702fd",
++      "topic": "Write a comprehensive and informative article covering all aspects of medieval cats and dogs, including culture, mythology, legends, fictional stories, superstitions, as well as interesting facts and tales, and examine historical sources related to these topics.",
++      "category": "History & Culture",
++      "report_title": "A Comprehensive Analysis of Medieval Cats and Dogs: Myth, Reality, and Symbolism",
++      "topic_keyword_coverage": 0.16,
++      "word_count": 3386,
++      "char_count": 24606,
++      "section_count": 7,
++      "median_section_chars": 3177.0,
++      "max_section_chars": 3883,
++      "table_lines": 0,
++      "citation_count": 123,
++      "unique_citations": 38,
++      "reference_count": 38,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 0,
++      "citation_density_per_1000_words": 36.33,
++      "top_redundancy_risk": 0.4524,
++      "top_redundancy_pair": "Feline Enigmas: From Divine Veneration to Satanic Scapegoats <> The Plague, Propaganda, and the Modern Legacy of Medieval Animal Myths",
++      "high_redundancy_pair_count": 2,
++      "audit_risk_score": 2,
++      "flags": "high_redundancy_risk;low_topic_heading_overlap"
++    },
++    {
++      "index": 53,
++      "file_id": "d8023eeb2b82aa1398600213616731e5",
++      "topic": "Research all currency information in all the 'The Legend of Heroes' series.",
++      "category": "Entertainment & Fashion",
++      "report_title": "An Economic Deep Dive into the Currency of Zemuria",
++      "topic_keyword_coverage": 0.1667,
++      "word_count": 3333,
++      "char_count": 23295,
++      "section_count": 7,
++      "median_section_chars": 3103.0,
++      "max_section_chars": 4255,
++      "table_lines": 0,
++      "citation_count": 85,
++      "unique_citations": 16,
++      "reference_count": 16,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 4,
++      "citation_density_per_1000_words": 25.5,
++      "top_redundancy_risk": 0.5737,
++      "top_redundancy_pair": "The Mira: A Universal Currency Across Zemuria <> Economic Stability and the Mechanics of Value",
++      "high_redundancy_pair_count": 1,
++      "audit_risk_score": 4,
++      "flags": "empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap"
++    },
++    {
++      "index": 98,
++      "file_id": "58bc0467f752dd02c94d3952d53a0bd1",
++      "topic": "Investigate whether Yordles in League of Legends truly die when they suffer fatal damage, i.e., whether Yordles possess immortality characteristics, and if immortality does exist, what its specific mechanism of operation is.",
++      "category": "Other",
++      "report_title": "The Nature of Yordle Mortality: An Analysis of Immortality and Resurrection in Runeterra",
++      "topic_keyword_coverage": 0.1765,
++      "word_count": 3016,
++      "char_count": 20752,
++      "section_count": 7,
++      "median_section_chars": 2785.0,
++      "max_section_chars": 4262,
++      "table_lines": 0,
++      "citation_count": 126,
++      "unique_citations": 27,
++      "reference_count": 27,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 1,
++      "citation_density_per_1000_words": 41.78,
++      "top_redundancy_risk": 0.5562,
++      "top_redundancy_pair": "The Resurrection Hypothesis: Evidence for a Return Mechanism <> Bandle City: The Nexus of Yordle Life and Resurrection",
++      "high_redundancy_pair_count": 5,
++      "audit_risk_score": 3,
++      "flags": "empty_references;high_redundancy_risk;low_topic_heading_overlap"
++    },
++    {
++      "index": 12,
++      "file_id": "d9061a6b7cda8f80de65be20e06d2094",
++      "topic": "Explores the synthesis of a novel cationic porphyrin containing four cationic quaternary ammonium groups and its potential in antimicrobial applications. The research approach combines the antibacterial performance of quaternary ammonium salts (stemming from the cationic ammonium centers) with the bacterial photobiological inactivation triggered by porphyrin as a photosensitizer (aPDT). The proposed novel cationic porphyrin is designed to serve as a potential photosensitizer for aPDT, capable of eliminating microorganisms under light exposure and exhibiting antibacterial effects in dark conditions due to the characteristics of quaternary ammonium salts. This material can be used for treating bacterial surfaces.",
++      "category": "Science & Technology",
++      "report_title": "A Deep Research Report on a Novel Cationic Porphyrin for Dual-Action Antimicrobial Applications",
++      "topic_keyword_coverage": 0.1778,
++      "word_count": 3615,
++      "char_count": 27183,
++      "section_count": 7,
++      "median_section_chars": 4293.0,
++      "max_section_chars": 4527,
++      "table_lines": 0,
++      "citation_count": 64,
++      "unique_citations": 19,
++      "reference_count": 19,
++      "dangling_citation_count": 0,
++      "unused_reference_count": 0,
++      "empty_reference_count": 2,
++      "citation_density_per_1000_words": 17.7,
++      "top_redundancy_risk": 0.4004,
++      "top_redundancy_pair": "Mechanisms of Dual-Action Antimicrobial Efficacy <> Addressing Antimicrobial Resistance Through Innovative Design",
++      "high_redundancy_pair_count": 0,
++      "audit_risk_score": 3,
++      "flags": "empty_references;low_citation_density;low_topic_heading_overlap"
++    }
++  ]
++}
+diff --git a/example/report_corpus_audit/report_audit_summary.md b/example/report_corpus_audit/report_audit_summary.md
+new file mode 100644
+index 0000000..44fa9d9
+--- /dev/null
++++ b/example/report_corpus_audit/report_audit_summary.md
+@@ -0,0 +1,73 @@
++# DeepResearch-ReportEval Offline Corpus Audit
++
++- Generated at: `2026-05-04T15:13:55.466790+00:00`
++- Input path: `data/report/qwen-reports.jsonl`
++- Topic path: `data/topic/high_quality_topics.jsonl`
++- Reports scanned: 100
++- Redundancy risk threshold: 0.42
++
++## Corpus Summary
++
++- Average words per report: 3633.97
++- Median words per report: 3620.0
++- Average sections per report: 6.94
++- Average citation markers per report: 123.98
++- Reports with dangling citations: 0
++- Reports with empty references: 79
++- Reports with high redundancy risk: 82
++- Reports with low topic-heading overlap: 8
++- Reports with zero topic-heading overlap: 1
++- Max top redundancy risk: 0.7407
++
++## Category Summary
++
++| category | count | avg_words | avg_sections | avg_citations | avg_top_redundancy_risk | avg_topic_keyword_coverage | avg_audit_risk_score |
++| --- | --- | --- | --- | --- | --- | --- | --- |
++| Art, Music & Literature | 7 | 3585.57 | 7 | 124 | 0.4407 | 0.4517 | 1.71 |
++| Economy & Business | 16 | 3625.69 | 7 | 118.62 | 0.4715 | 0.4309 | 1.94 |
++| Education | 8 | 3731 | 7 | 131.88 | 0.4849 | 0.5444 | 2 |
++| Entertainment & Fashion | 5 | 3262.8 | 7 | 106 | 0.5074 | 0.2347 | 2.8 |
++| Environment & Nature | 2 | 3283 | 6.5 | 143 | 0.5131 | 0.4095 | 2 |
++| Health & Medicine | 10 | 3674.2 | 6.5 | 130.4 | 0.43 | 0.4918 | 2.3 |
++| History & Culture | 5 | 3593 | 7.4 | 115.6 | 0.4349 | 0.3776 | 1.6 |
++| Lifestyle | 1 | 4254 | 10 | 190 | 0.5474 | 0.2353 | 2 |
++| Other | 2 | 3699 | 7 | 127 | 0.5208 | 0.3216 | 2.5 |
++| Politics & Society | 5 | 3701.4 | 6.8 | 117 | 0.522 | 0.6183 | 2.6 |
++| Science & Technology | 37 | 3655.27 | 6.89 | 123.57 | 0.496 | 0.4541 | 2.16 |
++| Sports & Fitness | 2 | 3724 | 7 | 139 | 0.6208 | 0.4658 | 3 |
++
++## Top Risk Reports
++
++| index | category | word_count | section_count | reference_count | empty_reference_count | topic_keyword_coverage | top_redundancy_risk | audit_risk_score | flags |
++| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
++| 53 | Entertainment & Fashion | 3333 | 7 | 16 | 4 | 0.1667 | 0.5737 | 4 | empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap |
++| 95 | Education | 4162 | 7 | 24 | 3 | 0.6364 | 0.5303 | 4 | empty_references;very_long_section;low_citation_density;high_redundancy_risk |
++| 59 | Sports & Fitness | 3758 | 7 | 26 | 4 | 0.1538 | 0.5008 | 4 | empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap |
++| 46 | Art, Music & Literature | 3750 | 7 | 24 | 2 | 0.3889 | 0.4535 | 4 | empty_references;very_long_section;low_citation_density;high_redundancy_risk |
++| 30 | Health & Medicine | 2821 | 1 | 29 | 3 | 0.1562 | 0.0 | 4 | empty_references;few_sections;very_long_section;low_topic_heading_overlap |
++| 20 | Science & Technology | 3481 | 7 | 24 | 9 | 0.4615 | 0.6395 | 3 | empty_references;low_citation_density;high_redundancy_risk |
++| 62 | Economy & Business | 3112 | 7 | 17 | 3 | 0.24 | 0.6173 | 3 | empty_references;low_citation_density;high_redundancy_risk |
++| 24 | Science & Technology | 4336 | 7 | 19 | 1 | 0.5714 | 0.5713 | 3 | empty_references;low_citation_density;high_redundancy_risk |
++| 38 | Politics & Society | 4429 | 7 | 23 | 2 | 1.0 | 0.5611 | 3 | empty_references;low_citation_density;high_redundancy_risk |
++| 98 | Other | 3016 | 7 | 27 | 1 | 0.1765 | 0.5562 | 3 | empty_references;high_redundancy_risk;low_topic_heading_overlap |
++
++## Low Topic-Heading Overlap Reports
++
++| index | category | topic_keyword_coverage | report_title | flags |
++| --- | --- | --- | --- | --- |
++| 8 | Science & Technology | 0.0 | A Comparative Analysis of Tesla and BYD: The Battery and Charging Frontiers | empty_references;high_redundancy_risk;zero_topic_heading_overlap |
++| 89 | Science & Technology | 0.08 | A Deep Dive into AI Product Methodologies and Leadership | empty_references;low_citation_density;low_topic_heading_overlap |
++| 70 | Economy & Business | 0.1111 | A Deep Dive into the Composition of U.S. Consumer Spending | empty_references;low_topic_heading_overlap |
++| 59 | Sports & Fitness | 0.1538 | A Deep Dive into McLaren's 2025 Formula 1 Dominance | empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap |
++| 30 | Health & Medicine | 0.1562 | A Comprehensive Analysis of LDL Cholesterol Levels: Balancing Cardiovascular Risk and Potential Adverse Effects | empty_references;few_sections;very_long_section;low_topic_heading_overlap |
++| 44 | History & Culture | 0.16 | A Comprehensive Analysis of Medieval Cats and Dogs: Myth, Reality, and Symbolism | high_redundancy_risk;low_topic_heading_overlap |
++| 53 | Entertainment & Fashion | 0.1667 | An Economic Deep Dive into the Currency of Zemuria | empty_references;low_citation_density;high_redundancy_risk;low_topic_heading_overlap |
++| 98 | Other | 0.1765 | The Nature of Yordle Mortality: An Analysis of Immortality and Resurrection in Runeterra | empty_references;high_redundancy_risk;low_topic_heading_overlap |
++| 12 | Science & Technology | 0.1778 | A Deep Research Report on a Novel Cationic Porphyrin for Dual-Action Antimicrobial Applications | empty_references;low_citation_density;low_topic_heading_overlap |
++
++## Metric Notes
++
++- `top_redundancy_risk` is a deterministic lexical/citation-overlap proxy, not an LLM judge score.
++- `topic_keyword_coverage` is the fraction of non-stopword topic keywords found in the report title/headings.
++- `audit_risk_score` is the number of static flags triggered for a report.
++- The audit is meant to triage reports before paid LLM judging and to surface corpus-level failure patterns.
+-- 
+2.39.5 (Apple Git-154)
+

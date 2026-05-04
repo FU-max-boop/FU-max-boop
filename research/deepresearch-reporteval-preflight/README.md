@@ -1,31 +1,41 @@
-# DeepResearch-ReportEval Preflight
+# DeepResearch-ReportEval Offline Audit
 
-This is a small research-engineering contribution for HKUDS DeepResearch-Eval. I added a static preflight utility for report scoring and fact-checking, and corrected the README quality-scoring example to use report JSONL input instead of topic-only JSONL input.
+This is a research-engineering contribution for HKUDS DeepResearch-Eval. I first added a static preflight utility for report scoring and fact-checking, then extended the work into a full offline audit over the released 100 Qwen reports.
 
 Published branch: https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight
 
-## What It Checks
+## What It Adds
 
-- documented Python dependencies
-- OpenAI-compatible environment variables
-- Firecrawl/Jina provider key configuration
-- score-task JSONL schema: `topic` and `report`
-- fact-task JSONL schema: URL key and `contexts`
-- output path writability or creatability
+- static preflight for score/fact tasks
+- README correction from topic-only JSONL to report JSONL for quality scoring
+- offline corpus audit for all released Qwen reports
+- citation/reference consistency checks
+- topic-heading overlap diagnostics
+- deterministic cross-section redundancy-risk proxy
+- CSV, JSON, and Markdown audit outputs
 
-## Validation Result
+## Full-Corpus Result
 
-The preflight caught a meaningful reproduction issue: `judge_score.py` requires each JSONL row to contain both `topic` and `report`, while the topic dataset only contains topics. The contribution updates the quick-start path to `data/report/qwen-reports.jsonl`, which matches the scoring script.
+The offline audit scanned all 100 released reports without LLM/API calls.
 
-Local reports:
+- average report length: 3,633.97 words
+- average sections per report: 6.94
+- 79/100 reports contain empty reference entries
+- 82/100 reports trigger high redundancy-risk pairs under the deterministic proxy
+- 8/100 reports have low topic-heading overlap
+- 1/100 report has zero topic-heading overlap
 
-- score preflight scanned 100 report records and validated the score input schema
-- fact preflight scanned 1 example record and validated the fact-checking input schema
-- remaining blockers are expected local setup issues: missing dependencies and missing API keys
+One notable candidate: report index 8 has topic “cytochrome complexes in the initial reactions of photosynthesis,” but the report title is “A Comparative Analysis of Tesla and BYD: The Battery and Charging Frontiers.”
+
+The point is not to replace LLM judging. It is to triage the corpus before paid judge calls and surface data-level failure patterns that LLM scores alone may hide.
 
 ## Files
 
 - `preflight_reporteval.py`: proposed utility
+- `analyze_report_corpus.py`: offline audit script
 - `score-preflight.md` / `score-preflight.json`: local score-task validation
 - `fact-preflight.md` / `fact-preflight.json`: local fact-task validation
+- `report_audit_summary.md` / `report_audit_summary.json`: full-corpus audit summary
+- `report_audit_metrics.csv`: per-report metrics
 - `0001-add-reporteval-preflight-checks.patch`: patch for review
+- `0002-add-offline-report-corpus-audit.patch`: patch for review

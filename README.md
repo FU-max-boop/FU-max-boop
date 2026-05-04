@@ -74,11 +74,13 @@ LLM/embedding configuration, numeric environment variables, and output paths.
 
 Published branch: https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight
 
-### [DeepResearch-ReportEval Preflight](research/deepresearch-reporteval-preflight)
+### [DeepResearch-ReportEval Offline Audit](research/deepresearch-reporteval-preflight)
 
-A contribution around deep-research report evaluation. I added preflight checks
-for score/fact tasks and corrected the quality-scoring quick start to use the
-report JSONL file required by `judge_score.py`, instead of the topic-only JSONL.
+A contribution around deep-research report evaluation. I added preflight checks,
+corrected the quality-scoring quick start, and ran an offline audit over all 100
+released Qwen reports. The audit found empty reference entries in 79/100 reports,
+high redundancy-risk pairs in 82/100 reports, and one zero topic-heading overlap
+candidate where a photosynthesis topic maps to a Tesla/BYD charging report.
 
 Published branch: https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight
 
