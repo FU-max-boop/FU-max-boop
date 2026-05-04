@@ -1,0 +1,219 @@
+From 42f3596f7ba9329938286db1ac26116b41b048f9 Mon Sep 17 00:00:00 2001
+From: FU-max-boop <ht3fudatou@163.com>
+Date: Mon, 4 May 2026 18:18:42 +0800
+Subject: [PATCH 1/2] Clarify Spider2-DBT reproduction docs
+
+---
+ methods/spider-agent-dbt/README.md        | 13 +++-------
+ methods/spider-agent-dbt/requirements.txt |  3 ++-
+ spider2-dbt/README.md                     | 28 ++++++++++++++------
+ spider2-dbt/evaluation_suite/README.md    | 31 ++++++++---------------
+ 4 files changed, 36 insertions(+), 39 deletions(-)
+
+diff --git a/methods/spider-agent-dbt/README.md b/methods/spider-agent-dbt/README.md
+index 96387dfc..6cdcd348 100644
+--- a/methods/spider-agent-dbt/README.md
++++ b/methods/spider-agent-dbt/README.md
+@@ -27,16 +27,14 @@ Follow the instructions in the [Docker setup guide](https://docs.docker.com/engi
+ 
+ #### 3. Download Spider 2.0 DBT Database Source
+ ```
+-cd ../../spider2-dbt 
+-or
+-cd ./spider2-dbt
++cd ../../spider2-dbt
+ 
+ gdown 'https://drive.google.com/uc?id=1N3f7BSWC4foj-V-1C9n8M2XmgV7FOcqL'
+ gdown 'https://drive.google.com/uc?id=1s0USV_iQLo4oe05QqAMnhGGp5jeejCzp'
+ 
+ ```
+ 
+-#### 5. **Spider 2.0 DBT Setup**
++#### 4. **Spider 2.0 DBT Setup**
+ ```
+ python setup.py
+ ```
+@@ -57,7 +55,7 @@ export GEMINI_API_KEY=your_genmini_api_key
+ 
+ 
+ ```python
+-cd ../../methods/spider-agent-dbt
++cd ../methods/spider-agent-dbt
+ python run.py -s <The name of this experiment>
+ python run.py --model gpt-4o -s test1
+ ```
+@@ -66,7 +64,7 @@ python run.py --model gpt-4o -s test1
+ 
+ ```bash
+ python run.py --model gpt-4o -s experiment_name
+-python run.py --model gpt-4o -s experiment_name
++python run.py --model gpt-4o -s experiment_name -i 0
+ ```
+ 
+ ---
+@@ -101,6 +99,3 @@ You can run `evaluate.py` in the [evaluation suite](https://github.com/xlang-ai/
+ - `BQ_GET_TABLE_INFO`: Retrieves detailed column information for a specific table in BigQuery.
+ - `BQ_SAMPLE_ROWS`: Samples a specified number of rows from a BigQuery table and saves them as JSON.
+ - `Terminate`: Marks the completion of the task, returning the final result or file path.
+-
+-
+-
+diff --git a/methods/spider-agent-dbt/requirements.txt b/methods/spider-agent-dbt/requirements.txt
+index bf261656..38127eda 100644
+--- a/methods/spider-agent-dbt/requirements.txt
++++ b/methods/spider-agent-dbt/requirements.txt
+@@ -1,4 +1,5 @@
+ docker
++gdown
+ flaml
+ transformers
+ openai
+@@ -28,4 +29,4 @@ duckdb
+ psycopg2
+ psycopg2-binary
+ google.generativeai
+-plotly
+\ No newline at end of file
++plotly
+diff --git a/spider2-dbt/README.md b/spider2-dbt/README.md
+index 77d465a9..bdc631a9 100644
+--- a/spider2-dbt/README.md
++++ b/spider2-dbt/README.md
+@@ -1,6 +1,6 @@
+ # Spider 2.0-DBT
+ 
+-Spider 2.0-DBT contains 69 examples of DuckDB data transformation project.
++Spider 2.0-DBT contains 68 examples of DuckDB data transformation projects.
+ 
+ Solving these tasks requires models to understand project code, navigating complex SQL environments and handling long contexts. The models must perform advanced reasoning and generate diverse SQL queries, sometimes over 100 lines, surpassing traditional text-to-SQL challenges.
+ 
+@@ -28,11 +28,23 @@ Follow the instructions in the [Docker setup guide](https://docs.docker.com/engi
+ 
+ 
+ #### 3. Download Spider 2.0 DBT Database Source
++Choose one of the following based on your current directory.
++
++If you are in `methods/spider-agent-dbt`, run:
++
++```
++cd ../../spider2-dbt
++```
++
++If you are at the repository root, run:
++
++```
++cd spider2-dbt
+ ```
+-cd ../../spider2-dbt 
+-or
+-cd ./spider2-dbt
+ 
++Then download the DBT database source:
++
++```
+ gdown 'https://drive.google.com/uc?id=1N3f7BSWC4foj-V-1C9n8M2XmgV7FOcqL'
+ gdown 'https://drive.google.com/uc?id=1s0USV_iQLo4oe05QqAMnhGGp5jeejCzp'
+ 
+@@ -44,7 +56,7 @@ python setup.py
+ ```
+ 
+ 
+-#### 6. Run Spider-Agent
++#### 5. Run Spider-Agent
+ 
+ ##### Set LLM API Key
+ 
+@@ -59,7 +71,7 @@ export GEMINI_API_KEY=your_genmini_api_key
+ 
+ 
+ ```python
+-cd ../../methods/spider-agent
++cd ../methods/spider-agent-dbt
+ python run.py --suffix <The name of this experiment>
+ python run.py --model gpt-4o --suffix test1
+ ```
+@@ -67,11 +79,11 @@ python run.py --model gpt-4o --suffix test1
+ ### Example
+ 
+ ```bash
+-python run.py --model gpt-4o --s experiment_name
++python run.py --model gpt-4o -s experiment_name
++python run.py --model gpt-4o -s experiment_name -i 0
+ ```
+ 
+ 
+ ## Evaluation
+ 
+ We create [evaluation suite](./evaluation_suite) for Spider 2.0.
+-
+diff --git a/spider2-dbt/evaluation_suite/README.md b/spider2-dbt/evaluation_suite/README.md
+index cf3f1352..c624d96f 100644
+--- a/spider2-dbt/evaluation_suite/README.md
++++ b/spider2-dbt/evaluation_suite/README.md
+@@ -24,7 +24,7 @@ your-submission-folder/
+ ```json
+ {
+     "instance_id": "example_id",
+-    "answer_type": ["answer", "file"],
++    "answer_type": "answer",
+     "answer_or_path": "Specified answer or a relative path to the result file"
+ }
+ ```
+@@ -33,25 +33,12 @@ your-submission-folder/
+ - `answer_type`: Specifies whether the answer is direct answer (`answer`) or a file path (`file`).
+ - `answer_or_path`: If `answer_type` is `answer`, this should be the direct answer. If `answer_type` is `file`, this should be the path relative to the instance folder, such as `result.csv` or `db001.db`.
+ 
+-If there are only three instances results to be evaluated, the 'results_metadata.jsonl' should be
+-
+-```json
+-{
+-    "instance_id": "b544e853-00b3-45bc-b3ea-81f195739c60",
+-    "answer_type": "answer",
+-    "answer_or_path": 17.5056918%
+-},
+-{
+-    "instance_id": "0bcfa8c4-bc4c-4cd8-9fe5-dd60a2c1f956",
+-    "answer_type": "answer",
+-    "answer_or_path": "Google 24oz Ring"
+-},
+-{
+-    "instance_id": "1d009ac3-1c75-447b-a7e0-49ccc2b5fbf9",
+-    "answer_type": "file",
+-    "answer_or_path": "output.csv"
+-}
++If there are only three instance results to be evaluated, `results_metadata.jsonl` should contain one valid JSON object per line:
+ 
++```jsonl
++{"instance_id": "b544e853-00b3-45bc-b3ea-81f195739c60", "answer_type": "answer", "answer_or_path": "17.5056918%"}
++{"instance_id": "0bcfa8c4-bc4c-4cd8-9fe5-dd60a2c1f956", "answer_type": "answer", "answer_or_path": "Google 24oz Ring"}
++{"instance_id": "1d009ac3-1c75-447b-a7e0-49ccc2b5fbf9", "answer_type": "file", "answer_or_path": "output.csv"}
+ ```
+ 
+ The gold answers are saved in './gold'
+@@ -59,13 +46,15 @@ The gold answers are saved in './gold'
+ 
+ 
+ 
+-### How to use ?
++### How to use
+ 
+ 
+ #### Credential
+ 
+ configure your own bigquery_credential.json and snowflake_credential.json following [bigquery guideline](https://github.com/xlang-ai/Spider2/blob/main/assets/Bigquery_Guideline.md) and [snowflake guideline](https://github.com/xlang-ai/Spider2/blob/main/assets/Snowflake_Guideline.md)
+ 
++DuckDB/DBT evaluations do not require BigQuery or Snowflake credentials.
++
+ 
+ ```python
+ python evaluate.py --result_dir <your-submission-folder> --gold_dir gold
+@@ -164,4 +153,4 @@ Here is the formatted description of the parameters for the three functions in M
+ - **`gold` (str)**: Path to the DuckDB file containing the gold standard tables.
+ - **`condition_tabs` (List[str], optional)**: List of table names to be checked. If not provided, all tables in the gold DuckDB file will be considered.
+ - **`condition_cols` (List[List[int]], optional)**: A list of lists, where each inner list contains column indices used for matching conditions for the corresponding table. Defaults to considering all columns.
+-- **`ignore_orders` (List[bool], optional)**: A list of boolean values indicating whether to ignore the row order for each table comparison. Defaults to [False] for each table.
+\ No newline at end of file
++- **`ignore_orders` (List[bool], optional)**: A list of boolean values indicating whether to ignore the row order for each table comparison. Defaults to [False] for each table.
+-- 
+2.39.5 (Apple Git-154)
+

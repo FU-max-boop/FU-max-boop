@@ -1,0 +1,158 @@
+From a86ac8c6c1ab62d57d5a45a19de5520bd2ff38c3 Mon Sep 17 00:00:00 2001
+From: FU-max-boop <ht3fudatou@163.com>
+Date: Mon, 4 May 2026 18:25:16 +0800
+Subject: [PATCH 2/2] Add Spider2-DBT preflight asset checker
+
+---
+ spider2-dbt/evaluation_suite/README.md        |   6 +
+ .../evaluation_suite/preflight_check.py       | 121 ++++++++++++++++++
+ 2 files changed, 127 insertions(+)
+ create mode 100644 spider2-dbt/evaluation_suite/preflight_check.py
+
+diff --git a/spider2-dbt/evaluation_suite/README.md b/spider2-dbt/evaluation_suite/README.md
+index c624d96f..7afb5145 100644
+--- a/spider2-dbt/evaluation_suite/README.md
++++ b/spider2-dbt/evaluation_suite/README.md
+@@ -55,6 +55,12 @@ configure your own bigquery_credential.json and snowflake_credential.json follow
+ 
+ DuckDB/DBT evaluations do not require BigQuery or Snowflake credentials.
+ 
++Optionally, check whether the downloaded DuckDB assets match the JSONL metadata before running evaluation:
++
++```python
++python preflight_check.py
++```
++
+ 
+ ```python
+ python evaluate.py --result_dir <your-submission-folder> --gold_dir gold
+diff --git a/spider2-dbt/evaluation_suite/preflight_check.py b/spider2-dbt/evaluation_suite/preflight_check.py
+new file mode 100644
+index 00000000..6eb23d32
+--- /dev/null
++++ b/spider2-dbt/evaluation_suite/preflight_check.py
+@@ -0,0 +1,121 @@
++import argparse
++import json
++from pathlib import Path
++
++
++def read_jsonl(path):
++    rows = []
++    with path.open() as f:
++        for line_no, line in enumerate(f, start=1):
++            line = line.strip()
++            if not line:
++                continue
++            try:
++                rows.append(json.loads(line))
++            except json.JSONDecodeError as exc:
++                raise ValueError(f"{path}:{line_no}: invalid JSONL") from exc
++    return rows
++
++
++def duckdb_dirs(root):
++    if not root.exists():
++        return set()
++    return {
++        child.name
++        for child in root.iterdir()
++        if child.is_dir() and any(child.glob("*.duckdb"))
++    }
++
++
++def expected_gold_files(gold_jsonl):
++    expected = {}
++    for row in read_jsonl(gold_jsonl):
++        instance_id = row["instance_id"]
++        metadata = row.get("evaluation", {})
++        metadatas = metadata if isinstance(metadata, list) else [metadata]
++        files = []
++        for item in metadatas:
++            gold = item.get("parameters", {}).get("gold")
++            if isinstance(gold, list):
++                files.extend(str(filename) for filename in gold)
++            elif gold:
++                files.append(str(gold))
++        expected[instance_id] = files
++    return expected
++
++
++def print_list(title, items):
++    print(f"{title}: {len(items)}")
++    for item in items:
++        print(f"  - {item}")
++
++
++def main():
++    parser = argparse.ArgumentParser(
++        description="Check Spider2-DBT JSONL metadata against downloaded DuckDB assets."
++    )
++    parser.add_argument(
++        "--spider2-dbt-dir",
++        type=Path,
++        default=Path(__file__).resolve().parents[1],
++        help="Path to spider2-dbt after running setup.py.",
++    )
++    args = parser.parse_args()
++
++    base = args.spider2_dbt_dir.resolve()
++    examples_jsonl = base / "examples" / "spider2-dbt.jsonl"
++    gold_jsonl = base / "evaluation_suite" / "gold" / "spider2_eval.jsonl"
++    examples_dir = base / "examples"
++    gold_dir = base / "evaluation_suite" / "gold"
++
++    example_ids = {row["instance_id"] for row in read_jsonl(examples_jsonl)}
++    eval_ids = {row["instance_id"] for row in read_jsonl(gold_jsonl)}
++    start_dirs = duckdb_dirs(examples_dir)
++    gold_dirs = duckdb_dirs(gold_dir)
++    expected_gold = expected_gold_files(gold_jsonl)
++
++    jsonl_id_mismatch = sorted(example_ids ^ eval_ids)
++    missing_start_dirs = sorted(example_ids - start_dirs)
++    extra_start_dirs = sorted(start_dirs - example_ids)
++    missing_gold_dirs = sorted(eval_ids - gold_dirs)
++    extra_gold_dirs = sorted(gold_dirs - eval_ids)
++    missing_expected_gold_files = sorted(
++        f"{instance_id}/{filename}"
++        for instance_id, filenames in expected_gold.items()
++        for filename in filenames
++        if not (gold_dir / instance_id / filename).exists()
++    )
++
++    print(f"Spider2-DBT dir: {base}")
++    print(f"example JSONL ids: {len(example_ids)}")
++    print(f"eval JSONL ids: {len(eval_ids)}")
++    print(f"start DuckDB dirs: {len(start_dirs)}")
++    print(f"gold DuckDB dirs: {len(gold_dirs)}")
++
++    print_list("JSONL id mismatch", jsonl_id_mismatch)
++    print_list("Missing start DuckDB dirs", missing_start_dirs)
++    print_list("Extra start DuckDB dirs", extra_start_dirs)
++    print_list("Missing gold DuckDB dirs", missing_gold_dirs)
++    print_list("Extra gold DuckDB dirs", extra_gold_dirs)
++    print_list("Missing expected gold files", missing_expected_gold_files)
++
++    has_issue = any(
++        [
++            jsonl_id_mismatch,
++            missing_start_dirs,
++            extra_start_dirs,
++            missing_gold_dirs,
++            extra_gold_dirs,
++            missing_expected_gold_files,
++        ]
++    )
++    if has_issue:
++        print("Preflight check failed: DBT assets do not match JSONL metadata.")
++        return 1
++
++    print("Preflight check passed.")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+-- 
+2.39.5 (Apple Git-154)
+

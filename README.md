@@ -33,6 +33,19 @@ The project includes:
 - a regenerated main figure
 - a first bridge to a more LLM-like tiny backbone using RoPE, RMSNorm, and SwiGLU
 
+### [Spider2-DBT Preflight Analysis](research/spider2-dbt-preflight)
+
+A small research-engineering contribution around Spider2-DBT reproducibility and agent evaluation.
+
+I reproduced the Spider2-DBT setup/evaluation path, found that only 61/68 tasks appear evaluation-ready after local setup due to asset/metadata mismatches, and built preflight tooling plus agent-facing DBT task briefs to separate benchmark packaging failures from genuine agent failures.
+
+Artifacts include:
+
+- a pushed Spider2 fork branch with docs/preflight commits
+- task-level preflight CSV and Markdown summary
+- scripts for DBT asset checks, static task analysis, and task brief generation
+- generated briefs for `playbook001`, `jira001`, `quickbooks001`, and `gitcoin001`
+
 ## How I Work
 
 I like turning a research idea into a visible artifact:
@@ -46,4 +59,3 @@ I like turning a research idea into a visible artifact:
 ## Direction
 
 I am especially interested in the space between AI research and research engineering: evaluation, interpretability-adjacent experiments, agentic workflows, and tools that make model behavior easier to reason about.
-
