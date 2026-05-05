@@ -73,8 +73,17 @@ Current result:
 ```
 
 It includes runnable experiment scripts, saved JSON results, result cards,
-technical memos, a regenerated figure, and a first bridge to a more LLM-like
-tiny backbone using RoPE, RMSNorm, and SwiGLU.
+technical memos, a regenerated figure, and a public claim-audit script that
+checks the result-card numbers against saved JSON artifacts.
+
+Audited Stage 1 result over 5 seeds:
+
+- visibility ladder: `0.016 -> 0.500 -> 0.980` held-out accuracy as the model
+  sees `0`, `1`, then `2` clues
+- shortcut diagnostic: shortcut failure drops from `1.000` with one clue to
+  `0.041` with both clues visible
+- bridge: a tiny `RoPE + RMSNorm + SwiGLU` decoder reaches `1.000` accuracy
+  when both clues are visible
 
 ## Contribution Batch
 
