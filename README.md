@@ -19,6 +19,7 @@ matching, extra predicted actions, and runtime package installation.
 - Fix: added direction/amount-aware scroll scoring, sequence-preserving key
   matching, extra-action penalty, and a no-install edit-distance fallback.
 - Validation: 6 offline regression tests plus sample AgentNetBench preflight.
+- Upstream PR: https://github.com/xlang-ai/OpenCUA/pull/56
 - Branch: https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight
 
 ### [DeepResearch-ReportEval Offline Audit](research/deepresearch-reporteval-preflight)
@@ -33,16 +34,18 @@ or API calls, then surfaced corpus-level quality risks before paid judge calls.
   released report corpus.
 - Branch: https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight
 
-### [RAG-Anything Content-List Audit](research/raganything-preflight)
+### [RAG-Anything Content-List Alias Handling](research/raganything-content-list-aliases)
 
-I extended RAG-Anything's direct `content_list` insertion path with an offline
-integrity audit and small schema/context fixes for multimodal chunks.
+I split RAG-Anything's direct `content_list` insertion audit into a small
+upstream behavior/schema fix for multimodal chunks.
 
-- Finding: the sample direct-insertion list exposes a placeholder image path,
-  missing local image, missing multimodal context, and equation format risk.
-- Fix: preserved `latex`, `text`, `text_format`, `table_body` / `table_data`,
-  and original content-list indexes for context extraction.
-- Validation: generated item-level audit outputs and local regression tests.
+- Finding: list processing could lose original content indexes and miss common
+  table/equation aliases such as `table_data` and `latex`.
+- Fix: preserved original content-list indexes, normalized captions/footnotes,
+  and supported table/equation alias fields.
+- Validation: offline regression tests for ordering, alias handling, and
+  multimodal chunk preservation.
+- Upstream PR: https://github.com/HKUDS/RAG-Anything/pull/273
 - Branch: https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight
 
 ### [LightRAG Offline Retrieval Audit](research/lightrag-evaluation-preflight)
@@ -54,7 +57,19 @@ questions before running LightRAG, RAGAS, embeddings, or LLM calls.
   question; top-k=2 recovers all expected sample documents.
 - Validation: BM25-style offline audit with recall@k, MRR, and generated
   top-1/top-2 reports.
+- Upstream PR: https://github.com/HKUDS/LightRAG/pull/3038
 - Branch: https://github.com/FU-max-boop/LightRAG/tree/docs/eval-readiness-preflight
+
+### [claw-eval Fixture Row Validation](research/claw-eval-fixture-row-validation)
+
+I tightened task fixture validation so benchmark setup problems are caught
+before an agent run.
+
+- Finding: `scripts/validate_tasks.py` checked required fixture fields only on
+  the first fixture row.
+- Fix: validate every fixture row and fail clearly on non-object rows.
+- Validation: offline unit test plus targeted `T024*` validation.
+- Upstream PR: https://github.com/claw-eval/claw-eval/pull/44
 
 ## Independent Research
 
