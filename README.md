@@ -13,16 +13,20 @@ I am building small AI-evaluation artifacts around claim-boundary discipline:
 turning model and agent behavior claims into runnable audits with controls,
 smoke tests, result cards, and explicit limitations.
 
-Public artifact:
+Portfolio landing page:
 
+- [AI Evaluation Research Artifacts](https://github.com/FU-max-boop/ai-eval-artifacts)
+
+Public artifacts:
+
+- [TraceUseAudit](https://github.com/FU-max-boop/traceuse-audit-public): trace-use
+  cards for checking whether final answers behaviorally depend on supplied
+  traces rather than merely imitating trace form.
 - [StateBind Guard](https://github.com/FU-max-boop/statebind-guard): a benchmark
-  and checker for executable-state binding in coding-agent handoffs. It tests
-  whether a handoff binds the active role to the exact file, command, PR, test,
-  artifact, or SHA needed for safe continuation. The current release includes
-  seed and natural-handoff benchmark snippets, visibility/keyword baselines,
-  result cards, tests, and a local handoff helper.
-
-Additional artifacts are staged privately while I finish release-quality checks.
+  and checker for executable-state binding in coding-agent handoffs.
+- [Claim-Boundary Audit](https://github.com/FU-max-boop/claim-boundary-audit-public):
+  a code-review feedback audit that reports which bounded utility claim is
+  actually supported.
 
 ## Selected Evidence
 
