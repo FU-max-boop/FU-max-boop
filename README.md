@@ -6,6 +6,24 @@ My strongest current signal is research engineering for AI evaluation systems:
 I inspect benchmarks and RAG pipelines, find concrete failure modes, and turn
 them into small, reviewable patches with offline validation.
 
+
+## Current Research Artifact Track
+
+I am staging a set of AI-evaluation research artifacts for public release after
+the current review/anonymity gate clears. The common theme is claim-boundary
+discipline: turning model and agent behavior claims into small runnable audits
+with controls, smoke tests, result cards, and explicit limitations.
+
+Current private artifact line:
+
+- behavioral audits for whether model answers genuinely depend on supplied reasoning traces;
+- executable-state diagnostics for coding-agent handoffs;
+- claim-boundary audits for code-review feedback utility.
+
+I am keeping the repositories private for now, but each is being prepared with a
+README, quickstart, smoke test, result card, source/license notes, and privacy
+scan before public release.
+
 ## Selected Evidence
 
 ### [OpenCUA AgentNetBench Evaluator Validity](research/opencua-agentnetbench-preflight)
