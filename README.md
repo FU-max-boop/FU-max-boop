@@ -9,20 +9,20 @@ them into small, reviewable patches with offline validation.
 
 ## Current Research Artifact Track
 
-I am staging a set of AI-evaluation research artifacts for public release after
-the current review/anonymity gate clears. The common theme is claim-boundary
-discipline: turning model and agent behavior claims into small runnable audits
-with controls, smoke tests, result cards, and explicit limitations.
+I am building small AI-evaluation artifacts around claim-boundary discipline:
+turning model and agent behavior claims into runnable audits with controls,
+smoke tests, result cards, and explicit limitations.
 
-Current private artifact line:
+Public artifact:
 
-- behavioral audits for whether model answers genuinely depend on supplied reasoning traces;
-- executable-state diagnostics for coding-agent handoffs;
-- claim-boundary audits for code-review feedback utility.
+- [StateBind Guard](https://github.com/FU-max-boop/statebind-guard): a benchmark
+  and checker for executable-state binding in coding-agent handoffs. It tests
+  whether a handoff binds the active role to the exact file, command, PR, test,
+  artifact, or SHA needed for safe continuation. The current release includes
+  seed and natural-handoff benchmark snippets, visibility/keyword baselines,
+  result cards, tests, and a local handoff helper.
 
-I am keeping the repositories private for now, but each is being prepared with a
-README, quickstart, smoke test, result card, source/license notes, and privacy
-scan before public release.
+Additional artifacts are staged privately while I finish release-quality checks.
 
 ## Selected Evidence
 
