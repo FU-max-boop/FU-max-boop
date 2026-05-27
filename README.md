@@ -1,164 +1,62 @@
-# Hi, I'm Fu
+# Fu Xiaonan
 
-I am building toward work as a student AI researcher / research engineer.
+HKU mathematics undergraduate building toward AI evaluation and research
+engineering.
 
-My strongest current signal is research engineering for AI evaluation systems:
-I inspect benchmarks and RAG pipelines, find concrete failure modes, and turn
-them into small, reviewable patches with offline validation.
+I work on small, runnable audits for places where AI systems look correct on
+the surface but may be relying on the wrong thing: traces that are imitated but
+not used, agent handoffs that expose identifiers but lose executable state, and
+code-review feedback whose utility claim is broader than the evidence supports.
 
+**Current direction:** AI eval, agent reliability, post-training behavior, and
+research engineering.
 
-## Current Research Artifact Track
+## Public Research Artifacts
 
-I am building small AI-evaluation artifacts around claim-boundary discipline:
-turning model and agent behavior claims into runnable audits with controls,
-smoke tests, result cards, and explicit limitations.
+| Artifact | What it tests | Runnable gate |
+| --- | --- | --- |
+| [TraceUseAudit](https://github.com/FU-max-boop/traceuse-audit-public) | Whether final answers behaviorally depend on supplied traces, rather than only matching trace form. | `make public-check` |
+| [StateBind Guard](https://github.com/FU-max-boop/statebind-guard) | Whether coding-agent handoffs preserve executable state bindings, not just visible names. | `bash scripts/check_public_ready.sh` |
+| [Claim-Boundary Audit](https://github.com/FU-max-boop/claim-boundary-audit-public) | Whether code-review feedback supports local utility, transfer utility, or only a narrower claim. | `make public-check` |
 
 Portfolio landing page:
+[ai-eval-artifacts](https://github.com/FU-max-boop/ai-eval-artifacts)
 
-- [AI Evaluation Research Artifacts](https://github.com/FU-max-boop/ai-eval-artifacts)
+One-page pitch:
+[Internship / Research Engineering Pitch](https://github.com/FU-max-boop/ai-eval-artifacts/blob/main/docs/internship_research_engineering_pitch.md)
 
-Public artifacts:
+## Open-Source Engineering Signal
 
-- [TraceUseAudit](https://github.com/FU-max-boop/traceuse-audit-public): trace-use
-  cards for checking whether final answers behaviorally depend on supplied
-  traces rather than merely imitating trace form.
-- [StateBind Guard](https://github.com/FU-max-boop/statebind-guard): a benchmark
-  and checker for executable-state binding in coding-agent handoffs.
-- [Claim-Boundary Audit](https://github.com/FU-max-boop/claim-boundary-audit-public):
-  a code-review feedback audit that reports which bounded utility claim is
-  actually supported.
+Merged upstream PRs:
 
-## Selected Evidence
+- [xlang-ai/OpenCUA#56](https://github.com/xlang-ai/OpenCUA/pull/56):
+  fixed AgentNetBench evaluator scoring edge cases.
+- [HKUDS/LightRAG#3038](https://github.com/HKUDS/LightRAG/pull/3038):
+  added an offline sample retrieval check for RAGAS evaluation.
+- [HKUDS/RAG-Anything#273](https://github.com/HKUDS/RAG-Anything/pull/273):
+  preserved content-list aliases in multimodal chunks.
+- [HKUDS/RAG-Anything#278](https://github.com/HKUDS/RAG-Anything/pull/278):
+  fixed content-list duplicate detection.
+- [pydantic/pydantic-ai#5355](https://github.com/pydantic/pydantic-ai/pull/5355):
+  preserved xAI tool result IDs and updated the xAI SDK constraint.
 
-### [OpenCUA AgentNetBench Evaluator Validity](research/opencua-agentnetbench-preflight)
+Open / review-stage PRs include work in
+[pydantic-ai](https://github.com/pydantic/pydantic-ai/pulls?q=is%3Apr+author%3AFU-max-boop),
+[modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk/pulls?q=is%3Apr+author%3AFU-max-boop),
+[microsoft/markitdown](https://github.com/microsoft/markitdown/pulls?q=is%3Apr+author%3AFU-max-boop),
+[browser-use](https://github.com/browser-use/browser-use/pulls?q=is%3Apr+author%3AFU-max-boop),
+and [claw-eval](https://github.com/claw-eval/claw-eval/pulls?q=is%3Apr+author%3AFU-max-boop).
 
-I fixed evaluator-validity issues in a GUI-agent benchmark path. The evaluator
-previously risked giving misleading scores for scroll direction, key-sequence
-matching, extra predicted actions, and runtime package installation.
+## Research Engineering Taste
 
-- Finding: opposite-direction scrolls could receive full credit; hotkey order
-  and repeated keys were ignored; extra predicted actions were not penalized.
-- Fix: added direction/amount-aware scroll scoring, sequence-preserving key
-  matching, extra-action penalty, and a no-install edit-distance fallback.
-- Validation: 6 offline regression tests plus sample AgentNetBench preflight.
-- Upstream PR: https://github.com/xlang-ai/OpenCUA/pull/56
-- Branch: https://github.com/FU-max-boop/OpenCUA/tree/docs/agentnetbench-preflight
+I try to make each artifact pass five gates:
 
-### [DeepResearch-ReportEval Offline Audit](research/deepresearch-reporteval-preflight)
+1. concrete failure mode or evaluation risk
+2. minimal reproducible example
+3. baseline or counterfactual control
+4. generated result card
+5. explicit claim boundary: what the evidence proves and what it does not
 
-I audited all 100 released Qwen reports in HKUDS DeepResearch-Eval without LLM
-or API calls, then surfaced corpus-level quality risks before paid judge calls.
-
-- Finding: 79/100 reports contain empty reference entries; 82/100 trigger high
-  redundancy-risk pairs; one report has zero topic-heading overlap.
-- Example: a photosynthesis topic maps to a Tesla/BYD charging report title.
-- Validation: deterministic CSV/JSON/Markdown audit outputs over the full
-  released report corpus.
-- Branch: https://github.com/FU-max-boop/DeepResearch-Eval/tree/docs/reporteval-preflight
-
-### [RAG-Anything Content-List Alias Handling](research/raganything-content-list-aliases)
-
-I split RAG-Anything's direct `content_list` insertion audit into a small
-upstream behavior/schema fix for multimodal chunks.
-
-- Finding: list processing could lose original content indexes and miss common
-  table/equation aliases such as `table_data` and `latex`.
-- Fix: preserved original content-list indexes, normalized captions/footnotes,
-  and supported table/equation alias fields.
-- Validation: offline regression tests for ordering, alias handling, and
-  multimodal chunk preservation.
-- Upstream PR: https://github.com/HKUDS/RAG-Anything/pull/273
-- Branch: https://github.com/FU-max-boop/RAG-Anything/tree/docs/raganything-preflight
-
-### [LightRAG Offline Retrieval Audit](research/lightrag-evaluation-preflight)
-
-I added a deterministic retrieval sanity audit for the LightRAG RAGAS sample
-questions before running LightRAG, RAGAS, embeddings, or LLM calls.
-
-- Finding: top-k=1 only partially covers the single multi-document sample
-  question; top-k=2 recovers all expected sample documents.
-- Validation: BM25-style offline audit with recall@k, MRR, and generated
-  top-1/top-2 reports.
-- Upstream PR: https://github.com/HKUDS/LightRAG/pull/3038
-- Branch: https://github.com/FU-max-boop/LightRAG/tree/docs/eval-readiness-preflight
-
-### [claw-eval Fixture Row Validation](research/claw-eval-fixture-row-validation)
-
-I tightened task fixture validation so benchmark setup problems are caught
-before an agent run.
-
-- Finding: `scripts/validate_tasks.py` checked required fixture fields only on
-  the first fixture row.
-- Fix: validate every fixture row and fail clearly on non-object rows.
-- Validation: offline unit test plus targeted `T024*` validation.
-- Upstream PR: https://github.com/claw-eval/claw-eval/pull/44
-
-## Independent Research
-
-### [mini-llm-lab](https://github.com/FU-max-boop/mini-llm-lab)
-
-`mini-llm-lab` is my controlled mini-benchmark for studying when tiny causal
-transformers genuinely use earlier context, and when they fall into shortcut
-regimes.
-
-Current result:
-
-```text
-0 clues visible -> local guessing
-1 clue visible  -> stable single-clue shortcut regime
-2 clues visible -> near-compositional use of both clues
-```
-
-It includes runnable experiment scripts, saved JSON results, result cards,
-technical memos, a regenerated figure, and a public claim-audit script that
-checks the result-card numbers against saved JSON artifacts.
-
-Audited Stage 1 result over 5 seeds:
-
-- visibility ladder: `0.016 -> 0.500 -> 0.980` held-out accuracy as the model
-  sees `0`, `1`, then `2` clues
-- shortcut diagnostic: shortcut failure drops from `1.000` with one clue to
-  `0.041` with both clues visible
-- bridge: a tiny `RoPE + RMSNorm + SwiGLU` decoder reaches `1.000` accuracy
-  when both clues are visible
-
-## Contribution Batch
-
-I also scanned recent HKU AI-adjacent projects and built small, reviewable
-research-engineering contributions where setup reliability, benchmark
-readiness, and evaluation hygiene matter.
-
-[HKU AI Paper Contribution Scout](research/hku-ai-paper-scout) summarizes the
-batch across DeepCode, AI-Researcher, OpenCUA, RAG-Anything,
-DeepResearch-Eval, LightRAG, Spider2, and Claw-Eval.
-
-Additional work samples:
-
-- [Spider2-DBT Preflight Analysis](research/spider2-dbt-preflight): found
-  61/68 Spider2-DBT tasks evaluation-ready after local setup and generated
-  agent-facing DBT task briefs.
-- [Claw-Eval Static Task Preflight](research/claw-eval-preflight): scanned
-  300 autonomous-agent task definitions to separate setup/task readiness issues
-  from model-side failures.
-- [DeepCode Config Preflight](research/deepcode-config-preflight): validated
-  provider keys, MCP commands, dependency readiness, workspace paths, and model
-  setup before agentic coding runs.
-- [AI-Researcher Benchmark Preflight](research/ai-researcher-benchmark-preflight):
-  checked benchmark instance schema, category metaprompts, workspace/cache
-  paths, Docker availability, and runtime dependencies.
-
-## Quality Bar
-
-I only count a contribution as strong when it has:
-
-1. a concrete failure mode or evaluation risk
-2. a minimal reproducible artifact
-3. offline validation when possible
-4. a small patch or generated report a maintainer can review quickly
-5. a written limitation: what the artifact proves and what it does not prove
-
-## Direction
-
-I am especially interested in the space between AI research and research
-engineering: evaluation, interpretability-adjacent experiments, agentic
-workflows, and tools that make model behavior easier to reason about.
+The work I want more of: compact evaluations, agent reliability tooling,
+post-training diagnostics, and OSS infrastructure where careful measurement
+changes engineering decisions.
