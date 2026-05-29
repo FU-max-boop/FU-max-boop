@@ -11,6 +11,10 @@ code-review feedback whose utility claim is broader than the evidence supports.
 **Current direction:** AI eval, agent reliability, post-training behavior, and
 research engineering.
 
+**Fast proof check:** the repositories below are meant to be run, not just read.
+Each flagship artifact has a quickstart, a smoke/public check, generated result
+cards, and an explicit claim boundary.
+
 ## Public Research Artifacts
 
 | Artifact | What it tests | Runnable gate |
@@ -24,6 +28,10 @@ Portfolio landing page:
 
 One-page pitch:
 [Internship / Research Engineering Pitch](https://github.com/FU-max-boop/ai-eval-artifacts/blob/main/docs/internship_research_engineering_pitch.md)
+
+If you are scanning for internship / research-engineering fit, start with
+`StateBind Guard` for coding-agent reliability and `TraceUseAudit` for LLM
+trace-use evaluation. Those are the two flagship proof assets.
 
 ## Open-Source Engineering Signal
 
