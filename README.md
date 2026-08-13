@@ -2,18 +2,18 @@
 
 **LLM evaluation · agent reliability · post-training research engineering**
 
-Hong Kong · The University of Hong Kong
+Hong Kong · The University of Hong Kong · Mathematics (second major)
 
 [Résumé](./assets/Fu_Xiaonan_LLM_Research_Engineering_Resume.pdf) ·
 [Research & engineering portfolio](https://github.com/FU-max-boop/ai-eval-artifacts) ·
 [LinkedIn](https://www.linkedin.com/in/xiaonan-fu-734a20339/) ·
 [ORCID](https://orcid.org/0009-0000-6423-7814)
 
-I am an HKU undergraduate and research engineer working on reproducible ways to
-evaluate LLM behavior, preserve executable state in agent systems, and test
-post-training claims. I currently contribute to AI agent development and
-evaluation at Tencent and conduct research at HKU's Centre of AI, Management
-and Organization.
+I am an HKU undergraduate studying Economics & Finance with a second major in
+Mathematics, and a research engineer working on reproducible ways to evaluate
+LLM behavior, preserve executable state in agent systems, and test post-training
+claims. I currently contribute to AI agent development and evaluation at Tencent
+and conduct research at HKU's Centre of AI, Management and Organization.
 
 ## Evidence at a glance
 
